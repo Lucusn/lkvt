@@ -6,14 +6,52 @@ import (
 	"fmt"
 	"math/rand"
 	"time"
-	"unsafe"
 	//bytes may get rid of unsafe
 )
+
+type kv struct {
+	key   string
+	value bytes.Buffer
+}
+
+//methods for key creation, value creation, etcd-operation (put / get)
+
+func createKey(keyPrefix string, rand string, keySize int) string {
+	key := keyPrefix + "."
+	for Sizeof(key) < keySize {
+		// "Sizeof(key)" is just placeholder for real code... what would work here?
+		key = key + rand
+	}
+	return key
+}
+
+func createValue(valueSize int, rand string) bytes.Buffer {
+	v := new(bytes.Buffer)
+	v.Grow(valueSize)
+	for Sizeof(v) < uintptr(v.Cap()) {
+		// "Sizeof(v)" is just placeholder for real code... what would work here?
+		//also is "uintptr(v.Cap())" correct here
+		v.WriteString(rand)
+		//would this be the correct way to add to the buffer? is there a beter way?
+	}
+	return *v
+}
+
+func createclient(putPercentage float64) {
+	//create client that does put/get at the ration requested
+	//need to learn how
+}
+
+func applyCrc(value bytes.Buffer) bytes.Buffer {
+	//take in value and add crc to the end of it
+	//need to learn how
+	return value_crc
+}
 
 func main() {
 	fmt.Println("starting the app...")
 
-	//flags for all the parameters
+	//FLAGS for all the parameters
 	putPercentage := flag.Float64("pp", 0.50, "percentage of puts versus gets. 0.50 means 50% put 50% get")
 	valueSize := flag.Int("vs", 0, "size of the value in bytes. min:16 or 32 bytes. ‘0’ means that the size is random")
 	//how do you set the min size? int128? int64 and must do twice in the loop min?
@@ -25,7 +63,7 @@ func main() {
 	concurrency := flag.Int("c", 1, "The number of concurrent etcd which may be outstanding at any one time")
 	flag.Parse()
 
-	//-----test to make sure all of the flags worked properly-----------
+	//-----TEST to make sure all of the flags worked properly-----------
 	fmt.Println("value size-----------", *valueSize)
 	fmt.Println("key size-------------", *keySize)
 	fmt.Println("put percentage-------", *putPercentage)
@@ -37,7 +75,8 @@ func main() {
 
 	//random number generator for seed
 	r := rand.New(rand.NewSource(*seed))
-	//true random size if size= 0
+
+	//random size if size= 0
 	random := rand.New(rand.NewSource(time.Now().UnixNano()))
 	if *keySize == 0 {
 		*keySize = random.Intn(32-1) + 1
@@ -50,31 +89,21 @@ func main() {
 		fmt.Println("this is the random value size", *valueSize)
 	}
 
-	//key generation and value generation
-	for i := 0; i < *amount; i++ {
-		currentrand := r.Int()
-		key := *keyPrefix + "." + fmt.Sprint(currentrand)
-		// how do you make sure this meets the required size? for loop until it is correct size?
-		fmt.Println(key)
-		fmt.Println(unsafe.Sizeof(key))
-		// unsafe size of returns size in bytes but seems to only return 16 on strings
-		b := new(bytes.Buffer)
-		b.Grow(*valueSize)
-		for unsafe.Sizeof(b) < uintptr(b.Cap()) {
-			fmt.Println(unsafe.Sizeof(b))
-			b.WriteByte(byte(currentrand))
-			//running into an infinite loop here
-			//figure out the correct for argument
-		}
-		//here we will add the crc32
-
-		//just a test to see what the size of the buffer and cap are after loop
-		fmt.Println(unsafe.Sizeof(b))
-		fmt.Println(b.Cap())
-		//---------------will be deleted later---------------------------------
-
+	//loop to create clients
+	for i := 0; i < *concurrency; i++ {
+		createclient(*putPercentage)
+		//should the kv be sent to the client upon creation?
 	}
 
-	//build cliensts and send values to clients here
-
+	//key generation and value generation
+	for i := 0; i < *amount; i++ {
+		currentrand := fmt.Sprint(r.Int63())
+		//making the random value into a string so you can add it repeatedly to the key and value
+		//is this okay? is there a better way to do this?
+		key := createKey(*keyPrefix, currentrand, *keySize)
+		value := createValue(*valueSize, currentrand)
+		valueWithcrc := applyCrc(value)
+		kv := kv{key, valueWithcrc}
+		//should this kv structt be sent to client within this loop?
+	}
 }
