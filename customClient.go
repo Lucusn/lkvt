@@ -16,7 +16,7 @@ type kv struct {
 
 //methods for key creation, value creation, etcd-operation (put / get)
 
-func createKey(keyPrefix string, rand string, keySize int) string {
+func (o *kv) createKey(keyPrefix string, rand string, keySize int) string {
 	key := keyPrefix + "."
 	for Sizeof(key) < keySize {
 		// "Sizeof(key)" is just placeholder for real code... what would work here?
