@@ -4,37 +4,51 @@ import (
 	"bytes"
 	"flag"
 	"fmt"
+	"hash/crc32"
 	"math/rand"
+	"strings"
 	"time"
-	//bytes may get rid of unsafe
 )
 
-type kv struct {
-	key   string
-	value bytes.Buffer
+type keyValue struct {
+	key       string
+	value     bytes.Buffer
+	keySize   int
+	keyPre    string
+	valueSize int
+	putget    float64
+	randVal   string
+	//*etcdClient	etcdClientclass //just place holder until I know what to put here
 }
 
 //methods for key creation, value creation, etcd-operation (put / get)
 
-func (o *kv) createKey(keyPrefix string, rand string, keySize int) string {
-	key := keyPrefix + "."
-	for Sizeof(key) < keySize {
-		// "Sizeof(key)" is just placeholder for real code... what would work here?
-		key = key + rand
+func (o *keyValue) createKey() {
+	o.key = o.keyPre + "."
+	var b strings.Builder
+	b.WriteString(o.key)
+	for b.Len() < o.keySize {
+		fmt.Fprintf(&b, o.randVal)
 	}
-	return key
+	o.key = b.String()
+	o.key = firstN(o.key, o.keySize)
 }
 
-func createValue(valueSize int, rand string) bytes.Buffer {
-	v := new(bytes.Buffer)
-	v.Grow(valueSize)
-	for Sizeof(v) < uintptr(v.Cap()) {
-		// "Sizeof(v)" is just placeholder for real code... what would work here?
-		//also is "uintptr(v.Cap())" correct here
-		v.WriteString(rand)
-		//would this be the correct way to add to the buffer? is there a beter way?
+func firstN(s string, n int) string {
+	if len(s) > n {
+		return s[:n]
 	}
-	return *v
+	return s
+}
+
+func (o *keyValue) createValue() {
+	v := new(bytes.Buffer)
+	v.Grow(o.valueSize)
+	for v.Len() < o.valueSize {
+		v.WriteString(o.randVal)
+	}
+	v.Truncate(o.valueSize)
+	o.value = *v
 }
 
 func createclient(putPercentage float64) {
@@ -42,10 +56,10 @@ func createclient(putPercentage float64) {
 	//need to learn how
 }
 
-func applyCrc(value bytes.Buffer) bytes.Buffer {
-	//take in value and add crc to the end of it
-	//need to learn how
-	return value_crc
+func (o *keyValue) applyCrc() {
+	//I do not know if this is correct. definetly needs checked
+	crc := crc32.ChecksumIEEE(o.value.Bytes())
+	o.value.WriteByte(byte(crc))
 }
 
 func main() {
@@ -53,10 +67,8 @@ func main() {
 
 	//FLAGS for all the parameters
 	putPercentage := flag.Float64("pp", 0.50, "percentage of puts versus gets. 0.50 means 50% put 50% get")
-	valueSize := flag.Int("vs", 0, "size of the value in bytes. min:16 or 32 bytes. ‘0’ means that the size is random")
-	//how do you set the min size? int128? int64 and must do twice in the loop min?
+	valueSize := flag.Int("vs", 0, "size of the value in bytes. min:16 bytes. ‘0’ means that the size is random")
 	keySize := flag.Int("ks", 0, "size of the key in bytes. min:1 byte. ‘0’ means that the size is random")
-	//how do you set the min size? int8?
 	amount := flag.Int("n", 1, "number of KVs to operate on")
 	keyPrefix := flag.String("kp", "key", "specify a key prefix")
 	seed := flag.Int64("s", time.Now().UnixNano(), "seed to the random number generator")
@@ -87,23 +99,33 @@ func main() {
 		*valueSize = random.Intn(1048576-16) + 16
 		//what should the max value be?
 		fmt.Println("this is the random value size", *valueSize)
+	} else if *valueSize < 16 {
+		*valueSize = 16
 	}
 
+	kv := keyValue{
+		keySize:   *keySize,
+		keyPre:    *keyPrefix,
+		valueSize: *valueSize,
+		putget:    *putPercentage,
+	}
 	//loop to create clients
 	for i := 0; i < *concurrency; i++ {
 		createclient(*putPercentage)
-		//should the kv be sent to the client upon creation?
 	}
 
 	//key generation and value generation
 	for i := 0; i < *amount; i++ {
-		currentrand := fmt.Sprint(r.Int63())
-		//making the random value into a string so you can add it repeatedly to the key and value
-		//is this okay? is there a better way to do this?
-		key := createKey(*keyPrefix, currentrand, *keySize)
-		value := createValue(*valueSize, currentrand)
-		valueWithcrc := applyCrc(value)
-		kv := kv{key, valueWithcrc}
-		//should this kv structt be sent to client within this loop?
+		kv.randVal = fmt.Sprint(r.Int63())
+		kv.createKey()
+		kv.createValue()
+		kv.applyCrc()
+		//----------test to make sure methods worked properly-------------
+		fmt.Println("current random value---", kv.randVal)
+		fmt.Println("key name---------------", kv.key)
+		fmt.Println("key value--------------", kv.value)
+		fmt.Println("kv as string-----------", kv.value.String())
+		//----------will delete this section later------------------------
+		//send to client here?
 	}
 }
