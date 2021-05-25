@@ -2,13 +2,15 @@ package main
 
 import (
 	"bytes"
+	"context"
 	"flag"
 	"fmt"
 	"hash/crc32"
 	"math/rand"
 	"strings"
 	"time"
-	//"go.etcd.io/etcd/clientv3"//this import is generating an error
+
+	"go.etcd.io/etcd/clientv3"
 )
 
 type keyValue struct {
@@ -51,10 +53,29 @@ func (o *keyValue) createValue() {
 	o.value.Truncate(o.valueSize)
 }
 
-func createclient(putPercentage float64) {
+func (o *keyValue) createclient() {
 	//create client that does put/get at the ratio requested
-	// having the clientv3 used in anyway generates the same/similar error
-	//mt.Println(clientv3.Version())
+	cli, err := clientv3.New(clientv3.Config{
+		Endpoints: []string{"http://127.0.0.100:2380",
+			"http://127.0.0.101:2380",
+			"http://127.0.0.102:2380",
+			"http://127.0.0.103:2380",
+			"http://127.0.0.104:2380"},
+		DialTimeout: 5 * time.Second,
+	})
+	if err != nil {
+		// handle error!
+	}
+	defer cli.Close()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	cli.Put(ctx, o.key, o.value.String())
+	//  o.value.String() is coming up as raplacement character
+	//not sure if this affects its size or not
+	cancel()
+	if err != nil {
+		// handle error!
+	}
 }
 
 func (o *keyValue) applyCrc() {
@@ -111,7 +132,7 @@ func main() {
 	}
 	//loop to create clients
 	for i := 0; i < *concurrency; i++ {
-		createclient(*putPercentage)
+		// kv.createclient()
 	}
 
 	//key generation and value generation
@@ -121,6 +142,8 @@ func main() {
 		kv.createValue()
 		kv.applyCrc()
 		//send to client here?
+		kv.createclient()
+		//placed here to make sure it was working properly
 		fmt.Println(kv, "\n-----------")
 	}
 }
