@@ -8,6 +8,7 @@ import (
 	"math/rand"
 	"strings"
 	"time"
+	//"go.etcd.io/etcd/clientv3"//this import is generating an error
 )
 
 type keyValue struct {
@@ -18,6 +19,7 @@ type keyValue struct {
 	valueSize int
 	putget    float64
 	randVal   string
+	crcCheck  bool
 	//*etcdClient	etcdClientclass //just place holder until I know what to put here
 }
 
@@ -42,24 +44,32 @@ func firstN(s string, n int) string {
 }
 
 func (o *keyValue) createValue() {
-	v := new(bytes.Buffer)
-	v.Grow(o.valueSize)
-	for v.Len() < o.valueSize {
-		v.WriteString(o.randVal)
+	o.value.Grow(o.valueSize)
+	for o.value.Len() < o.valueSize {
+		o.value.WriteString(o.randVal)
 	}
-	v.Truncate(o.valueSize)
-	o.value = *v
+	o.value.Truncate(o.valueSize)
 }
 
 func createclient(putPercentage float64) {
-	//create client that does put/get at the ration requested
-	//need to learn how
+	//create client that does put/get at the ratio requested
+	// having the clientv3 used in anyway generates the same/similar error
+	//mt.Println(clientv3.Version())
 }
 
 func (o *keyValue) applyCrc() {
 	//I do not know if this is correct. definetly needs checked
 	crc := crc32.ChecksumIEEE(o.value.Bytes())
 	o.value.WriteByte(byte(crc))
+	o.crcChecker(crc)
+}
+
+func (o *keyValue) crcChecker(crc uint32) {
+	//checks to make sure the crc is working correctly
+	check := crc32.ChecksumIEEE(o.value.Next(o.valueSize))
+	if check == crc {
+		o.crcCheck = true
+	}
 }
 
 func main() {
@@ -74,16 +84,6 @@ func main() {
 	seed := flag.Int64("s", time.Now().UnixNano(), "seed to the random number generator")
 	concurrency := flag.Int("c", 1, "The number of concurrent etcd which may be outstanding at any one time")
 	flag.Parse()
-
-	//-----TEST to make sure all of the flags worked properly-----------
-	fmt.Println("value size-----------", *valueSize)
-	fmt.Println("key size-------------", *keySize)
-	fmt.Println("put percentage-------", *putPercentage)
-	fmt.Println("amount of keys-------", *amount)
-	fmt.Println("key prefix-----------", *keyPrefix)
-	fmt.Println("seed-----------------", *seed)
-	fmt.Println("concurracny number---", *concurrency)
-	//---------this test will be deleted later on-----------------------
 
 	//random number generator for seed
 	r := rand.New(rand.NewSource(*seed))
@@ -120,12 +120,7 @@ func main() {
 		kv.createKey()
 		kv.createValue()
 		kv.applyCrc()
-		//----------test to make sure methods worked properly-------------
-		fmt.Println("current random value---", kv.randVal)
-		fmt.Println("key name---------------", kv.key)
-		fmt.Println("key value--------------", kv.value)
-		fmt.Println("kv as string-----------", kv.value.String())
-		//----------will delete this section later------------------------
 		//send to client here?
+		fmt.Println(kv, "\n-----------")
 	}
 }
