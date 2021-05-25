@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	//	"errors"
 	"flag"
 	"fmt"
 	"hash/crc32"
