@@ -2,84 +2,84 @@ package main
 
 import (
 	"bytes"
-	"context"
+	//"context"
 	"flag"
 	"fmt"
 	"hash/crc32"
 	"math/rand"
-	"strings"
+	"sync"
 	"time"
-
-	"go.etcd.io/etcd/clientv3"
+	//"go.etcd.io/etcd/clientv3"
 )
 
 type keyValue struct {
-	key       string
+	key       bytes.Buffer
 	value     bytes.Buffer
 	keySize   int
-	keyPre    string
+	keyPre    []byte
 	valueSize int
 	putget    float64
-	randVal   string
+	randVal   byte
 	crcCheck  bool
-	//*etcdClient	etcdClientclass //just place holder until I know what to put here
+	//client    clientv3.Client
 }
 
 //methods for key creation, value creation, etcd-operation (put / get)
 
-func (o *keyValue) createKey() {
-	o.key = o.keyPre + "."
-	var b strings.Builder
-	b.WriteString(o.key)
-	for b.Len() < o.keySize {
-		fmt.Fprintf(&b, o.randVal)
-	}
-	o.key = b.String()
-	o.key = firstN(o.key, o.keySize)
+func (o *keyValue) createKV(r int64) {
+	o.randVal = byte(r)
+	o.createKey()
+	o.createValue()
+	o.applyCrc()
+	//send to client here? yes
+	o.createclient()
+	// that placed here to make sure it was working properly
 }
 
-func firstN(s string, n int) string {
-	if len(s) > n {
-		return s[:n]
+func (o *keyValue) createKey() {
+	o.key.Write(o.keyPre)
+	o.key.WriteByte(byte('.'))
+	for o.key.Len() < o.keySize {
+		o.key.WriteByte(o.randVal)
 	}
-	return s
+	o.key.Truncate(o.keySize)
 }
 
 func (o *keyValue) createValue() {
 	o.value.Grow(o.valueSize)
 	for o.value.Len() < o.valueSize {
-		o.value.WriteString(o.randVal)
+		o.value.WriteByte(o.randVal)
 	}
 	o.value.Truncate(o.valueSize)
 }
 
 func (o *keyValue) createclient() {
 	//create client that does put/get at the ratio requested
-	cli, err := clientv3.New(clientv3.Config{
-		Endpoints: []string{"http://127.0.0.100:2380",
-			"http://127.0.0.101:2380",
-			"http://127.0.0.102:2380",
-			"http://127.0.0.103:2380",
-			"http://127.0.0.104:2380"},
-		DialTimeout: 5 * time.Second,
-	})
-	if err != nil {
-		// handle error!
-	}
-	defer cli.Close()
+	// cli, err := clientv3.New(clientv3.Config{
+	// 	Endpoints: []string{"http://127.0.0.100:2380",
+	// 		"http://127.0.0.101:2380",
+	// 		"http://127.0.0.102:2380",
+	// 		"http://127.0.0.103:2380",
+	// 		"http://127.0.0.104:2380"},
+	// 	DialTimeout: 5 * time.Second,
+	// })
+	// if err != nil {
+	// 	fmt.Errorf("could not make connection")
+	// }
+	// defer cli.Close()
 
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	cli.Put(ctx, o.key, o.value.String())
-	//  o.value.String() is coming up as raplacement character
-	//not sure if this affects its size or not
-	cancel()
-	if err != nil {
-		// handle error!
-	}
+	// ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	// cli.Put(ctx, o.key.String(), o.value.String())
+	// //  o.value.String() is coming up as raplacement character
+	// //not sure if this affects its size or not
+	// cancel()
+	// if err != nil {
+	// 	// handle error!String
+	// }
 }
 
 func (o *keyValue) applyCrc() {
-	//I do not know if this is correct. definetly needs checked
+	//use go test to check this
 	crc := crc32.ChecksumIEEE(o.value.Bytes())
 	o.value.WriteByte(byte(crc))
 	o.crcChecker(crc)
@@ -124,26 +124,37 @@ func main() {
 		*valueSize = 16
 	}
 
-	kv := keyValue{
-		keySize:   *keySize,
-		keyPre:    *keyPrefix,
-		valueSize: *valueSize,
-		putget:    *putPercentage,
+	var wg sync.WaitGroup
+	wg.Add(*concurrency)
+	for c := 0; c < *concurrency; c++ {
+		go func(c int) {
+			//client should be created earlier and must utilize put get
+			for i := 0; i < (*amount / *concurrency); i++ {
+				kv := keyValue{
+					keySize:   *keySize,
+					keyPre:    []byte(*keyPrefix),
+					valueSize: *valueSize,
+					putget:    *putPercentage,
+				}
+				kv.createKV(r.Int63())
+				// fmt.Println(c, "------------------\n", kv)
+			}
+			defer wg.Done()
+		}(c)
 	}
-	//loop to create clients
-	for i := 0; i < *concurrency; i++ {
-		// kv.createclient()
+	if (*amount % *concurrency) != 0 {
+		for i := 0; i < (*amount % *concurrency); i++ {
+			kv := keyValue{
+				keySize:   *keySize,
+				keyPre:    []byte(*keyPrefix),
+				valueSize: *valueSize,
+				putget:    *putPercentage,
+			}
+			kv.createKV(r.Int63())
+			// fmt.Println("-----------\n", kv)
+		}
 	}
-
-	//key generation and value generation
-	for i := 0; i < *amount; i++ {
-		kv.randVal = fmt.Sprint(r.Int63())
-		kv.createKey()
-		kv.createValue()
-		kv.applyCrc()
-		//send to client here?
-		kv.createclient()
-		//placed here to make sure it was working properly
-		fmt.Println(kv, "\n-----------")
-	}
+	wg.Wait()
+	fmt.Println("done")
+	// having error if amount is too high. noticed at 1 million
 }
