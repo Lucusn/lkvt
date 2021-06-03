@@ -3,31 +3,47 @@ package main
 import (
 	"bytes"
 	"hash/crc32"
-	"math/rand"
 	"testing"
-	"time"
 )
 
 func TestCrc(t *testing.T) {
-	//quick test to make crc works properly
-	for i := 0; i < 1000; i++ {
-		random := rand.New(rand.NewSource(time.Now().UnixNano()))
 
-		curRand := random.Intn(30000-1) + 1
-		var value bytes.Buffer
-		value.Grow(curRand)
-		for value.Len() < curRand {
-			value.WriteByte(byte(random.Int()))
+	kv := keyValue{
+		valueSize: 10000,
+		randVal:   0, // randval determines what the value is filled with
+	}
+	kv.createValue()
+	kv.applyCrc()
+	var crc [4]byte
+	for i := 0; i < 4; i++ {
+		crc[i] = kv.valCrc[10000+i]
+	}
+
+	for i := 0; i < kv.valueSize; i++ {
+		if kv.valCrc[i] != 0 { // make sure this value is the same as the argument above
+			t.Errorf("value was not 0. value was %d", kv.valCrc[i])
 		}
-		value.Truncate(curRand)
 
-		crc := crc32.ChecksumIEEE(value.Bytes())
-		value.WriteByte(byte(crc))
+	}
 
-		check := crc32.ChecksumIEEE(value.Next(curRand))
+	if len(kv.valCrc) != (kv.valueSize + 4) {
+		t.Errorf("value not the correct size %d", kv.value.Len())
+	}
 
-		if check != crc {
-			t.Errorf("crcCheck check was false")
-		}
+	var fakeGet bytes.Buffer
+	for i := 0; i < kv.valueSize; i++ {
+		fakeGet.WriteByte(kv.valCrc[i])
+	}
+
+	crc_on_get := crc32.ChecksumIEEE(fakeGet.Bytes())
+	getcrcArr := toByteArray(crc_on_get)
+	get := append(fakeGet.Bytes(), getcrcArr[:]...)
+
+	if getcrcArr != crc {
+		t.Errorf("crc do not match")
+	}
+	// compares the value with the crc on the end of each
+	if string(get) != string(kv.valCrc) {
+		t.Errorf("value changed during the get")
 	}
 }

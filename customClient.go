@@ -2,45 +2,48 @@ package main
 
 import (
 	"bytes"
-	//"context"
+	"context"
+	"encoding/binary"
 	"flag"
 	"fmt"
 	"hash/crc32"
 	"math/rand"
 	"sync"
 	"time"
-	//"go.etcd.io/etcd/clientv3"
+
+	"go.etcd.io/etcd/clientv3"
 )
 
 type keyValue struct {
 	key       bytes.Buffer
 	value     bytes.Buffer
+	valCrc    []byte
 	keySize   int
 	keyPre    []byte
 	valueSize int
 	putget    float64
 	randVal   byte
 	crcCheck  bool
-	//client    clientv3.Client
+	client    clientv3.Client
 }
 
-//methods for key creation, value creation, etcd-operation (put / get)
-
-func (o *keyValue) createKV(r int64) {
+func (o *keyValue) createKV(r int32, keyran rand.Rand) {
 	o.randVal = byte(r)
-	o.createKey()
+	o.createKey(keyran)
 	o.createValue()
 	o.applyCrc()
-	//send to client here? yes
-	o.createclient()
-	// that placed here to make sure it was working properly
 }
 
-func (o *keyValue) createKey() {
+func (o *keyValue) createKey(keyran rand.Rand) {
 	o.key.Write(o.keyPre)
+	//add count here if more need be
 	o.key.WriteByte(byte('.'))
+	r := keyran.Uint32()
+	rArr := toByteArray(r)
 	for o.key.Len() < o.keySize {
-		o.key.WriteByte(o.randVal)
+		for i := 0; i < 4; i++ {
+			o.key.WriteByte(rArr[i])
+		}
 	}
 	o.key.Truncate(o.keySize)
 }
@@ -53,35 +56,39 @@ func (o *keyValue) createValue() {
 	o.value.Truncate(o.valueSize)
 }
 
-func (o *keyValue) createclient() {
-	//create client that does put/get at the ratio requested
-	// cli, err := clientv3.New(clientv3.Config{
-	// 	Endpoints: []string{"http://127.0.0.100:2380",
-	// 		"http://127.0.0.101:2380",
-	// 		"http://127.0.0.102:2380",
-	// 		"http://127.0.0.103:2380",
-	// 		"http://127.0.0.104:2380"},
-	// 	DialTimeout: 5 * time.Second,
-	// })
-	// if err != nil {
-	// 	fmt.Errorf("could not make connection")
-	// }
-	// defer cli.Close()
+func createclient() clientv3.Client {
+	cli, err := clientv3.New(clientv3.Config{
+		Endpoints: []string{"http://127.0.0.100:2380",
+			"http://127.0.0.101:2380",
+			"http://127.0.0.102:2380",
+			"http://127.0.0.103:2380",
+			"http://127.0.0.104:2380"},
+		DialTimeout: 5 * time.Second,
+	})
+	if err != nil {
+		fmt.Errorf("could not make connection")
+	}
+	return *cli
+}
 
-	// ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	// cli.Put(ctx, o.key.String(), o.value.String())
-	// //  o.value.String() is coming up as raplacement character
-	// //not sure if this affects its size or not
-	// cancel()
-	// if err != nil {
-	// 	// handle error!String
-	// }
+func (o *keyValue) sendClientPut() {
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	fmt.Println("kv.key:", o.key, "\nput value", string(o.valCrc), binary.Size(o.valCrc))
+	o.client.Put(ctx, o.key.String(), string(o.valCrc))
+	cancel()
+}
+
+func (o *keyValue) sendClientGet() {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	gr, _ := o.client.Get(ctx, o.key.String())
+	fmt.Println("get key: ", gr.Kvs[0].Key, "\nget value:", gr.Kvs[0].Value)
+	cancel()
 }
 
 func (o *keyValue) applyCrc() {
-	//use go test to check this
 	crc := crc32.ChecksumIEEE(o.value.Bytes())
-	o.value.WriteByte(byte(crc))
+	crcArr := toByteArray(crc)
+	o.valCrc = append(o.value.Bytes(), crcArr[:]...)
 	o.crcChecker(crc)
 }
 
@@ -92,6 +99,30 @@ func (o *keyValue) crcChecker(crc uint32) {
 		o.crcCheck = true
 	}
 }
+
+func toByteArray(i uint32) (arr [4]byte) {
+	binary.BigEndian.PutUint32(arr[0:4], uint32(i))
+	return
+}
+
+// func test(amount int, concurrency int, keySize int, keyPrefix string, valueSize int, putPercentage float64, client clientv3.Client, r rand.Rand, wg sync.WaitGroup) { //actual function
+// 	for i := 0; i < (amount / concurrency); i++ {
+// 		kv := keyValue{
+// 			keySize:   keySize,
+// 			keyPre:    []byte(keyPrefix),
+// 			valueSize: valueSize,
+// 			putget:    putPercentage,
+// 			client:    client,
+// 		}
+// 		kv.createKV(r.Int63() /*, c, i*/)
+// 		fmt.Println("------------------\n", kv.key)
+// 		kv.sendClient()
+// 	}
+// 	time.Sleep(1000) //may fix all not being sent
+// 	defer wg.Done()
+// }
+// ----------------the wait group no longer works with this------------
+// error: test passes lock by value: sync.WaitGroup contains sync.noCopycopylocks
 
 func main() {
 	fmt.Println("starting the app...")
@@ -107,7 +138,7 @@ func main() {
 	flag.Parse()
 
 	//random number generator for seed
-	r := rand.New(rand.NewSource(*seed))
+	rSeed := rand.New(rand.NewSource(*seed))
 
 	//random size if size= 0
 	random := rand.New(rand.NewSource(time.Now().UnixNano()))
@@ -126,19 +157,31 @@ func main() {
 
 	var wg sync.WaitGroup
 	wg.Add(*concurrency)
+	client := createclient()
 	for c := 0; c < *concurrency; c++ {
-		go func(c int) {
-			//client should be created earlier and must utilize put get
+		//go test(*amount, *concurrency, *keySize, *keyPrefix, *valueSize, *putPercentage, client, *r, wg)
+		go func(c int) { //if turned into actual function wait group doesnt work
 			for i := 0; i < (*amount / *concurrency); i++ {
 				kv := keyValue{
 					keySize:   *keySize,
 					keyPre:    []byte(*keyPrefix),
 					valueSize: *valueSize,
 					putget:    *putPercentage,
+					client:    client,
 				}
-				kv.createKV(r.Int63())
-				// fmt.Println(c, "------------------\n", kv)
+				//kv.createKV(rSeed.Int63())
+				kv.createKV(rSeed.Int31(), *rSeed)
+				fmt.Println("------------------")
+				if float64(i) < float64(*amount)/float64(*concurrency)*kv.putget {
+					kv.sendClientPut()
+				} else {
+					kv.sendClientGet()
+				}
+				// put/get system could be improved
+				// if multiple go routines it could get discombobulated
+				time.Sleep(10000)
 			}
+
 			defer wg.Done()
 		}(c)
 	}
@@ -149,12 +192,36 @@ func main() {
 				keyPre:    []byte(*keyPrefix),
 				valueSize: *valueSize,
 				putget:    *putPercentage,
+				client:    client,
 			}
-			kv.createKV(r.Int63())
-			// fmt.Println("-----------\n", kv)
+			//kv.createKV(rSeed.Int63())
+			kv.createKV(rSeed.Int31(), *rSeed)
+			fmt.Println("-----------")
+			if float64(i) < float64(*amount)/float64(*concurrency)*kv.putget {
+				kv.sendClientPut()
+			} else {
+				kv.sendClientGet()
+			}
+			//this sorter need fixed
 		}
 	}
 	wg.Wait()
 	fmt.Println("done")
-	// having error if amount is too high. noticed at 1 million
+	client.Close()
+	// seems not all keys are being sent to cluster
+	// i belive the app is shutting down before they are sent
+	// increasing sleep doesnt seem to help
+
+	//error during run
+	// 	goroutine 18 [running]:
+	// main.(*keyValue).sendClientGet(0xc000577d30)
+	//         /home/lucusn/etcd/etcd-custom-client/customClient.go:79 +0x290
+	// main.main.func1(0xc000037978, 0xc000037988, 0xc000037970, 0xc00030cc90, 0xc000037968, 0xc000037958, 0xc000246d00, 0xc000231e00, 0xc000037990, 0x4)
+	//         /home/lucusn/etcd/etcd-custom-client/customClient.go:173 +0x2d6
+	// created by main.main
+	//         /home/lucusn/etcd/etcd-custom-client/customClient.go:158 +0x6ec
+	// exit status 2
+	//
+	//the following shows in the cluster
+	//WARNING: 2021/06/03 16:41:27 [core] grpc: Server.processUnaryRPC failed to write status: connection error: desc = "transport is closing"
 }
