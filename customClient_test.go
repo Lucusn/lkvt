@@ -10,8 +10,8 @@ func TestCrc(t *testing.T) {
 
 	kv := keyValue{
 		valueSize: 10000,
-		randVal:   0, // randval determines what the value is filled with
 	}
+	kv.randVal = toByteArray(uint32(0)) // randval determines what the value is filled with
 	kv.createValue()
 	kv.applyCrc()
 	var crc [4]byte
