@@ -32,8 +32,7 @@ type keyValue struct {
 type kvFooter struct {
 	crc      uint32
 	valSz    uint32
-	startT   time.Time
-	timeUnix int64
+	timeUnix int64 // We want to use the unix timestamp here (your choice to use nano or not) so that we can get an idea of what time and date the KV was uploaded (i.e. "June 7th, 18:38:56 2021")
 }
 
 func (o *keyValue) createKV() {
@@ -76,19 +75,20 @@ func createclient(endpoint []string) (clientv3.Client, error) {
 
 func (o *keyValue) sendClientPut() {
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-	//fmt.Println("kv.key:", o.key, "\nput value", string(o.valCrc), binary.Size(o.valCrc))
 	o.client.Put(ctx, o.key.String(), string(o.valCrc))
-	o.footer.timeUnix = int64(time.Since(o.footer.startT).Microseconds())
+	o.footer.timeUnix = time.Now().UnixNano()
 	cancel()
+	// fmt.Println("kv.key: ", o.key, "\nput value: ", string(o.valCrc), "\ntime of put Unix nano: ", o.footer.timeUnix)
 }
 
 func (o *keyValue) sendClientGet() {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	gr, _ := o.client.Get(ctx, o.key.String())
-	getVal := gr.Kvs[0].Value
-	//fmt.Println("get key: ", gr.Kvs[0].Key, "\nget value:", getVal)
-	o.footer.timeUnix = int64(time.Since(o.footer.startT).Microseconds())
+	o.footer.timeUnix = time.Now().UnixNano()
 	cancel()
+	getVal := gr.Kvs[0].Value
+	// fmt.Println("get key: ", gr.Kvs[0].Key, "\nget value:", getVal, "\ntime of get Unix nano: ", o.footer.timeUnix)
+
 	var getCrc [4]byte
 	for i := 0; i < 4; i++ {
 		getCrc[3-i] = getVal[len(getVal)-1-i]
@@ -114,7 +114,6 @@ func (o *keyValue) crcChecker(value []byte, crc [4]byte) {
 	if !o.crcCheck {
 		log.Fatal("the crc check was ", o.crcCheck, crc, checkArr)
 	}
-
 }
 
 func toByteArray(i uint32) (arr [4]byte) {
@@ -122,24 +121,25 @@ func toByteArray(i uint32) (arr [4]byte) {
 	return
 }
 
-// func test(amount int, concurrency int, keySize int, keyPrefix string, valueSize int, putPercentage float64, client clientv3.Client, r rand.Rand, wg sync.WaitGroup) { //actual function
-// 	for i := 0; i < (amount / concurrency); i++ {
-// 		kv := keyValue{
-// 			keySize:   keySize,
-// 			keyPre:    []byte(keyPrefix),
-// 			valueSize: valueSize,
-// 			putget:    putPercentage,
-// 			client:    client,
-// 		}
-// 		kv.createKV(r.Int63() /*, c, i*/)
-// 		fmt.Println("------------------\n", kv.key)
-// 		kv.sendClient()
-// 	}
-// 	time.Sleep(1000) //may fix all not being sent
-// 	defer wg.Done()
-// }
-// ----------------the wait group no longer works with this------------
-// error: test passes lock by value: sync.WaitGroup contains sync.noCopycopylocks
+func test(amount int, concurrency int, c int, keySize int, keyPrefix string, valueSize int, putPercentage float64, client clientv3.Client, ran []uint32, wg *sync.WaitGroup) { //actual function
+	for i := 0; i < (amount / concurrency); i++ {
+		kv := keyValue{
+			keySize:   keySize,
+			keyPre:    []byte(keyPrefix),
+			valueSize: valueSize,
+			client:    client,
+			randVal:   toByteArray(ran[i]),
+			count:     uint32((amount/concurrency)*c + i),
+		}
+		kv.createKV()
+		if float64(i) < float64(amount/concurrency)*(putPercentage) {
+			kv.sendClientPut()
+		} else {
+			kv.sendClientGet()
+		}
+	}
+	defer wg.Done()
+}
 
 func main() {
 	fmt.Println("starting the app...")
@@ -158,15 +158,6 @@ func main() {
 
 	//random number generator for seed
 	rSeed := rand.New(rand.NewSource(*seed))
-
-	//random number organizer to prevent keys from becoming missnamed
-	// for c := 0; c < *concurrency; c++ {
-	// 	for i := 0; i < (*amount / *concurrency); i++ {
-	// 		arrSize := *amount / *concurrency
-	// 		ranArr := [arrSize]int
-	// 			:= rSeed.Uint32()
-	// 	}
-	// }
 
 	//random size if size= 0
 	random := rand.New(rand.NewSource(time.Now().UnixNano()))
@@ -187,43 +178,21 @@ func main() {
 	wg.Add(*concurrency)
 	client, err := createclient(endpts)
 	if err != nil {
-		fmt.Errorf("could not make connection")
+		log.Fatal("could not make connection", err)
 	}
-	var timePutTot int64
-	var timeGetTot int64
-	// const arrSize int = *amount / *concurrency
+
+	var timer1 time.Time
 	for c := 0; c < *concurrency; c++ {
-		//how do you make a variable constant? final?
-		// var ranArr [arrSize]uint32
-		// for i := 0; i < (*amount / *concurrency); i++ {
-		// 	ranArr[i] = rSeed.Uint32()
-		// }
-		//go test(*amount, *concurrency, *keySize, *keyPrefix, *valueSize, *putPercentage, client, *r, wg)
-		go func(c int) { //if turned into actual function wait group doesnt work
-			for i := 0; i < (*amount / *concurrency); i++ {
-				kv := keyValue{
-					keySize:   *keySize,
-					keyPre:    []byte(*keyPrefix),
-					valueSize: *valueSize,
-					client:    client,
-					randVal:   toByteArray(rSeed.Uint32()),
-					count:     uint32((*amount / *concurrency)*c + i),
-				}
-				kv.footer.startT = time.Now()
-				kv.createKV()
-				if float64(i) < float64(*amount / *concurrency)*(*putPercentage) {
-					kv.sendClientPut()
-					timePutTot = timePutTot + kv.footer.timeUnix
-					// array filled with time per put
-				} else {
-					kv.sendClientGet()
-					timeGetTot = timeGetTot + kv.footer.timeUnix
-				}
-			}
-			defer wg.Done()
-		}(c)
-		time.Sleep(10000)
+		//this organizes the values so they stay the same each generation
+		var ran = make([]uint32, *amount / *concurrency)
+		for i := 0; i < (*amount / *concurrency); i++ {
+			ran[i] = rSeed.Uint32()
+		}
+		timer1 = time.Now()
+		go test(*amount, *concurrency, c, *keySize, *keyPrefix, *valueSize, *putPercentage, client, ran, &wg)
+		time.Sleep(1000)
 	}
+	// this portion ensures that any kvs missed are entered correctly
 	if (*amount % *concurrency) != 0 {
 		for i := 0; i < (*amount % *concurrency); i++ {
 			kv := keyValue{
@@ -237,20 +206,16 @@ func main() {
 			kv.createKV()
 			if float64(i) < float64(*amount%*concurrency)*(*putPercentage) {
 				kv.sendClientPut()
-				timePutTot = timePutTot + kv.footer.timeUnix
-				// array filled with time per put
 			} else {
 				kv.sendClientGet()
-				timeGetTot = timeGetTot + kv.footer.timeUnix
-				// array filled with time per get
 			}
 		}
 	}
 	wg.Wait()
-	fmt.Println("done")
-	fmt.Println("time per put in microseconds", timePutTot/int64(*amount)) //change to fit ratio
-	fmt.Println("time per get in microseconds", timeGetTot/int64(*amount)) //change to fit ratio
-
+	stopTime := time.Since(timer1)
 	client.Close()
-	// the random number filler is not consistent with the creation
+	fmt.Println("done")
+	fmt.Printf("%v operations completed in %v\n%v operations per second \n%v put per second \n%v get per second \n", *amount, stopTime, float64(*amount)/stopTime.Seconds(), (*putPercentage*float64(*amount))/stopTime.Seconds(), (((*putPercentage-1)*-1)*float64(*amount))/stopTime.Seconds())
+	//the put and get per second should be more accurate
+	//this assumes that the put and get take the same time
 }

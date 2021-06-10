@@ -19,26 +19,31 @@ func TestCrc(t *testing.T) {
 		crc[i] = kv.valCrc[10000+i]
 	}
 
+	// makes sure each bit is 0
 	for i := 0; i < kv.valueSize; i++ {
 		if kv.valCrc[i] != 0 { // make sure this value is the same as the argument above
 			t.Errorf("value was not 0. value was %d", kv.valCrc[i])
 		}
-
 	}
 
+	// makes sure the size is corrects
 	if len(kv.valCrc) != (kv.valueSize + 4) {
 		t.Errorf("value not the correct size %d", kv.value.Len())
 	}
 
 	var fakeGet bytes.Buffer
-	for i := 0; i < kv.valueSize; i++ {
-		fakeGet.WriteByte(kv.valCrc[i])
+	for fakeGet.Len() < kv.valueSize {
+		for i := 0; i < 4; i++ {
+			fakeGet.WriteByte(kv.randVal[i])
+		}
 	}
+	fakeGet.Truncate(kv.valueSize)
 
 	crc_on_get := crc32.ChecksumIEEE(fakeGet.Bytes())
 	getcrcArr := toByteArray(crc_on_get)
 	get := append(fakeGet.Bytes(), getcrcArr[:]...)
 
+	// compares the crc
 	if getcrcArr != crc {
 		t.Errorf("crc do not match")
 	}
