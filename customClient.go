@@ -19,7 +19,7 @@ import (
 type keyValue struct {
 	key       bytes.Buffer
 	value     bytes.Buffer
-	valAndCrc []byte
+	valForPut []byte
 	keySize   int
 	keyPre    []byte
 	valueSize int
@@ -137,9 +137,9 @@ func (o *keyValue) sendClientPut() {
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	o.footer.timeUnix = time.Now().UnixNano()
 	time := toBigByteArray(uint64(o.footer.timeUnix))
-	o.valAndCrc = append(o.valAndCrc, time[:]...)
-	o.client.Put(ctx, o.key.String(), string(o.valAndCrc))
-	// fmt.Println("kv.key: ", o.key, "\nput value: ", string(o.valAndCrc), "\ntime of put Unix nano: ", o.footer.timeUnix)
+	o.valForPut = append(o.valForPut, time[:]...)
+	o.client.Put(ctx, o.key.String(), string(o.valForPut))
+	// fmt.Println("kv.key: ", o.key, "\nput value: ", string(o.valForPut), "\ntime of put Unix nano: ", o.footer.timeUnix)
 	cancel()
 }
 
@@ -161,7 +161,7 @@ func (o *keyValue) sendClientGet() {
 func (o *keyValue) applyCrc() {
 	crc := crc32.ChecksumIEEE(o.value.Bytes())
 	crcArr := toByteArray(crc)
-	o.valAndCrc = append(o.value.Bytes(), crcArr[:]...)
+	o.valForPut = append(o.value.Bytes(), crcArr[:]...)
 	o.footer.crc = crc
 }
 
