@@ -16,18 +16,18 @@ func TestCrc(t *testing.T) {
 	kv.applyCrc()
 	var crc [4]byte
 	for i := 0; i < 4; i++ {
-		crc[i] = kv.valCrc[10000+i]
+		crc[i] = kv.valAndCrc[10000+i]
 	}
 
 	// makes sure each bit is 0
 	for i := 0; i < kv.valueSize; i++ {
-		if kv.valCrc[i] != 0 { // make sure this value is the same as the argument above
-			t.Errorf("value was not 0. value was %d", kv.valCrc[i])
+		if kv.valAndCrc[i] != 0 { // make sure this value is the same as the argument above
+			t.Errorf("value was not 0. value was %d", kv.valAndCrc[i])
 		}
 	}
 
 	// makes sure the size is corrects
-	if len(kv.valCrc) != (kv.valueSize + 4) {
+	if len(kv.valAndCrc) != (kv.valueSize + 4) {
 		t.Errorf("value not the correct size %d", kv.value.Len())
 	}
 
@@ -48,7 +48,7 @@ func TestCrc(t *testing.T) {
 		t.Errorf("crc do not match")
 	}
 	// compares the value with the crc on the end of each
-	if string(get) != string(kv.valCrc) {
+	if string(get) != string(kv.valAndCrc) {
 		t.Errorf("value changed during the get")
 	}
 }
