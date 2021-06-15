@@ -47,9 +47,9 @@ type config struct {
 	endpoints     *string
 	rSeed         *rand.Rand
 	client        clientv3.Client
-	timer         time.Time
+	putTimes      []time.Duration
+	getTimes      []time.Duration
 	wg            sync.WaitGroup
-	// kv            keyValue
 }
 
 func (conf *config) setUp() {
@@ -84,15 +84,23 @@ func (conf *config) setUp() {
 
 func (conf *config) exitApp() {
 	conf.wg.Wait()
-	stopTime := time.Since(conf.timer)
 	conf.client.Close()
 	log.WithFields(log.Fields{
-		"operations completed":  *conf.amount,
-		"time":                  stopTime,
-		"operations per second": float64(*conf.amount) / stopTime.Seconds(),
-		"put per second":        (*conf.putPercentage * float64(*conf.amount)) / stopTime.Seconds(),
-		"get per second":        ((((*conf.putPercentage - 1) * -1) * float64(*conf.amount)) / stopTime.Seconds()),
+		"operations completed": *conf.amount,
+		"seconds":              (float64(sumTime(conf.putTimes).Seconds()) / float64(*conf.concurrency)) + (float64(sumTime(conf.getTimes).Seconds()) / float64(*conf.concurrency)),
+		"time for puts":        float64(sumTime(conf.putTimes).Seconds()) / float64(*conf.concurrency),
+		"time for gets":        float64(sumTime(conf.getTimes).Seconds()) / float64(*conf.concurrency),
+		"put per sec":          (*conf.putPercentage * float64(*conf.amount)) / (float64(sumTime(conf.putTimes).Seconds()) / float64(*conf.concurrency)),
+		"get per sec":          (((*conf.putPercentage - 1) * -1) * float64(*conf.amount)) / (float64(sumTime(conf.getTimes).Seconds()) / float64(*conf.concurrency)),
 	}).Info("done")
+}
+
+func sumTime(array []time.Duration) time.Duration {
+	result := 0 * time.Second
+	for _, v := range array {
+		result += v
+	}
+	return result
 }
 
 func (o *keyValue) createKV(op int) {
@@ -223,7 +231,7 @@ func toBigByteArray(i uint64) (arr [8]byte) {
 	return
 }
 
-func (conf config) execute(c int, ran []uint32, wg *sync.WaitGroup) {
+func (conf *config) execute(c int, ran []uint32, wg *sync.WaitGroup) {
 	// if wg is not sent into the method like this it doesnt work
 	for i := 0; i < (*conf.amount / *conf.concurrency); i++ {
 		kv := keyValue{
@@ -236,16 +244,27 @@ func (conf config) execute(c int, ran []uint32, wg *sync.WaitGroup) {
 		}
 		if float64(i) < float64(*conf.amount / *conf.concurrency)*(*conf.putPercentage) {
 			kv.createKV(0)
+			putTimer := time.Now()
 			kv.sendClientPut()
+			// end put timer
+			stopPutTime := time.Since(putTimer)
+			// add time to put array
+			conf.putTimes = append(conf.putTimes, stopPutTime)
 		} else {
 			kv.createKV(1)
+			//start get timer
+			getTimer := time.Now()
 			kv.sendClientGet()
+			// end get timer
+			stopGetTime := time.Since(getTimer)
+			// add time to get array
+			conf.getTimes = append(conf.getTimes, stopGetTime)
 		}
 	}
 	defer wg.Done()
 }
 
-func (conf config) remainder() {
+func (conf *config) remainder() {
 	for i := 0; i < (*conf.amount % *conf.concurrency); i++ {
 		kv := keyValue{
 			keySize:   *conf.keySize,
@@ -257,10 +276,22 @@ func (conf config) remainder() {
 		}
 		if float64(i) < float64(*conf.amount%*conf.concurrency)*(*conf.putPercentage) {
 			kv.createKV(0)
+			// start put timer
+			putTimer := time.Now()
 			kv.sendClientPut()
+			// end put timer
+			stopPutTime := time.Since(putTimer)
+			// add time to put array
+			conf.putTimes = append(conf.putTimes, stopPutTime)
 		} else {
 			kv.createKV(1)
+			//start get timer
+			getTimer := time.Now()
 			kv.sendClientGet()
+			// end get timer
+			stopGetTime := time.Since(getTimer)
+			// add time to get array
+			conf.getTimes = append(conf.getTimes, stopGetTime)
 		}
 	}
 }
@@ -288,7 +319,6 @@ func main() {
 	conf.setUp()
 	for c := 0; c < *conf.concurrency; c++ {
 		ran := conf.randSetUp(conf.rSeed)
-		conf.timer = time.Now()
 		go conf.execute(c, ran, &conf.wg)
 		time.Sleep(1000)
 	}
