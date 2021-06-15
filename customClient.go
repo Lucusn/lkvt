@@ -49,7 +49,7 @@ type config struct {
 	client        clientv3.Client
 	timer         time.Time
 	wg            sync.WaitGroup
-	kv            keyValue
+	// kv            keyValue
 }
 
 func (conf *config) setUp() {
@@ -226,7 +226,7 @@ func toBigByteArray(i uint64) (arr [8]byte) {
 func (conf config) execute(c int, ran []uint32, wg *sync.WaitGroup) {
 	// if wg is not sent into the method like this it doesnt work
 	for i := 0; i < (*conf.amount / *conf.concurrency); i++ {
-		conf.kv = keyValue{
+		kv := keyValue{
 			keySize:   *conf.keySize,
 			keyPre:    []byte(*conf.keyPrefix),
 			valueSize: *conf.valueSize,
@@ -235,11 +235,11 @@ func (conf config) execute(c int, ran []uint32, wg *sync.WaitGroup) {
 			count:     uint32((*conf.amount / *conf.concurrency)*c + i),
 		}
 		if float64(i) < float64(*conf.amount / *conf.concurrency)*(*conf.putPercentage) {
-			conf.kv.createKV(0)
-			conf.kv.sendClientPut()
+			kv.createKV(0)
+			kv.sendClientPut()
 		} else {
-			conf.kv.createKV(1)
-			conf.kv.sendClientGet()
+			kv.createKV(1)
+			kv.sendClientGet()
 		}
 	}
 	defer wg.Done()
@@ -247,7 +247,7 @@ func (conf config) execute(c int, ran []uint32, wg *sync.WaitGroup) {
 
 func (conf config) remainder() {
 	for i := 0; i < (*conf.amount % *conf.concurrency); i++ {
-		conf.kv = keyValue{
+		kv := keyValue{
 			keySize:   *conf.keySize,
 			keyPre:    []byte(*conf.keyPrefix),
 			valueSize: *conf.valueSize,
@@ -256,11 +256,11 @@ func (conf config) remainder() {
 			count:     uint32((*conf.amount / *conf.concurrency)*(*conf.concurrency) + i),
 		}
 		if float64(i) < float64(*conf.amount%*conf.concurrency)*(*conf.putPercentage) {
-			conf.kv.createKV(0)
-			conf.kv.sendClientPut()
+			kv.createKV(0)
+			kv.sendClientPut()
 		} else {
-			conf.kv.createKV(1)
-			conf.kv.sendClientGet()
+			kv.createKV(1)
+			kv.sendClientGet()
 		}
 	}
 }
