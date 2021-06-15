@@ -8,7 +8,7 @@ on:
 jobs:
   test:
 
-    runs-on: obuntu-latest
+    runs-on: ubuntu-latest
 
     steps:
     - name: Install go
