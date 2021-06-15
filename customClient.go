@@ -5,14 +5,13 @@ import (
 	"context"
 	"encoding/binary"
 	"flag"
-	"fmt"
 	"hash/crc32"
-	"log"
 	"math/rand"
 	"strings"
 	"sync"
 	"time"
 
+	log "github.com/sirupsen/logrus"
 	"go.etcd.io/etcd/clientv3"
 )
 
@@ -34,6 +33,7 @@ type kvFooter struct {
 	crc      uint32
 	valSz    uint32
 	timeUnix int64
+	footID   byte
 }
 
 type config struct {
@@ -45,52 +45,54 @@ type config struct {
 	seed          *int64
 	concurrency   *int
 	endpoints     *string
+	rSeed         *rand.Rand
+	client        clientv3.Client
+	timer         time.Time
+	wg            sync.WaitGroup
+	kv            keyValue
 }
 
-func (conf *config) setUp() (*rand.Rand, clientv3.Client, time.Time, *sync.WaitGroup) {
+func (conf *config) setUp() {
 	flag.Parse()
 	endpts := strings.Split(*conf.endpoints, ",")
 
 	//random number generator for seed
-	rSeed := rand.New(rand.NewSource(*conf.seed))
+	conf.rSeed = rand.New(rand.NewSource(*conf.seed))
 
 	//random size if size= 0
 	random := rand.New(rand.NewSource(time.Now().UnixNano()))
 	if *conf.keySize == 0 {
 		*conf.keySize = random.Intn(255-1) + 1
 		//what should the max value be?
-		fmt.Println("this is the random key size", *conf.keySize)
+		log.Info("this is the random key size", *conf.keySize)
 	}
 	if *conf.valueSize == 0 {
 		*conf.valueSize = random.Intn(1048576-16) + 16
 		//what should the max value be?
-		fmt.Println("this is the random value size", *conf.valueSize)
+		log.Info("this is the random value size", *conf.valueSize)
 	} else if *conf.valueSize < 16 {
 		*conf.valueSize = 16
 	}
 
-	var wg sync.WaitGroup
-	wg.Add(*conf.concurrency)
-	client, err := createclient(endpts)
+	conf.wg.Add(*conf.concurrency)
+	var err error
+	conf.client, err = createclient(endpts)
 	if err != nil {
 		log.Fatal("could not make connection", err)
 	}
-
-	var timer time.Time
-
-	return rSeed, client, timer, &wg
 }
 
-func (conf *config) exitApp(wg *sync.WaitGroup, timer time.Time, client clientv3.Client) {
-	wg.Wait()
-	stopTime := time.Since(timer)
-	client.Close()
-	fmt.Println("done")
-	fmt.Printf("%v operations completed in %v\n%v operations per second \n%v put per second \n%v get per second \n",
-		*conf.amount, stopTime,
-		float64(*conf.amount)/stopTime.Seconds(),
-		(*conf.putPercentage*float64(*conf.amount))/stopTime.Seconds(),
-		(((*conf.putPercentage-1)*-1)*float64(*conf.amount))/stopTime.Seconds())
+func (conf *config) exitApp() {
+	conf.wg.Wait()
+	stopTime := time.Since(conf.timer)
+	conf.client.Close()
+	log.WithFields(log.Fields{
+		"operations completed":  *conf.amount,
+		"time":                  stopTime,
+		"operations per second": float64(*conf.amount) / stopTime.Seconds(),
+		"put per second":        (*conf.putPercentage * float64(*conf.amount)) / stopTime.Seconds(),
+		"get per second":        ((((*conf.putPercentage - 1) * -1) * float64(*conf.amount)) / stopTime.Seconds()),
+	}).Info("done")
 }
 
 func (o *keyValue) createKV(op int) {
@@ -122,7 +124,7 @@ func (o *keyValue) createValue() {
 	}
 	o.value.Truncate(o.valueSize)
 	o.footer.valSz = uint32(o.value.Len())
-	o.applyCrc()
+	o.applyFooter()
 }
 
 func createclient(endpoint []string) (clientv3.Client, error) {
@@ -139,42 +141,75 @@ func (o *keyValue) sendClientPut() {
 	time := toBigByteArray(uint64(o.footer.timeUnix))
 	o.valForPut = append(o.valForPut, time[:]...)
 	o.client.Put(ctx, o.key.String(), string(o.valForPut))
-	// fmt.Println("kv.key: ", o.key, "\nput value: ", string(o.valForPut), "\ntime of put Unix nano: ", o.footer.timeUnix)
+	log.WithFields(log.Fields{
+		"kv.key":                o.key,
+		"put value":             string(o.valForPut),
+		"time of put Unix nano": o.footer.timeUnix,
+	}).Debug("put")
 	cancel()
 }
 
 func (o *keyValue) sendClientGet() {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	gr, _ := o.client.Get(ctx, o.key.String())
-	o.footer.timeUnix = time.Now().UnixNano()
 	cancel()
 	getVal := gr.Kvs[0].Value
-	// fmt.Println("get key: ", gr.Kvs[0].Key, "\nget value:", getVal, "\ntime of get Unix nano: ", o.footer.timeUnix)
-
-	var getCrc [4]byte
-	for i := 0; i < 4; i++ {
-		getCrc[3-i] = getVal[len(getVal)-9-i]
+	log.WithFields(log.Fields{
+		"get key":               gr.Kvs[0].Key,
+		"get value":             getVal,
+		"time of get Unix nano": o.footer.timeUnix,
+	}).Debug("get")
+	getFooter := getFooter(getVal)
+	magCheck := o.magicChecker(getFooter)
+	if magCheck {
+		o.crcChecker(getVal, getFooter)
+	} else {
+		log.Fatal("magic check failes. ", getFooter[0], byte(175))
 	}
-	o.crcChecker(getVal, getCrc)
+
 }
 
-func (o *keyValue) applyCrc() {
+func getFooter(getVal []byte) [13]byte {
+	var getFooter [13]byte
+	for i := 0; i < 13; i++ {
+		getFooter[i] = getVal[len(getVal)-13+i]
+	}
+	return getFooter
+}
+
+func (o *keyValue) applyFooter() {
+	o.footer.footID = byte(175) // magic number
+	o.valForPut = append(o.value.Bytes(), o.footer.footID)
 	crc := crc32.ChecksumIEEE(o.value.Bytes())
 	crcArr := toByteArray(crc)
-	o.valForPut = append(o.value.Bytes(), crcArr[:]...)
+	o.valForPut = append(o.valForPut, crcArr[:]...)
 	o.footer.crc = crc
 }
 
-func (o *keyValue) crcChecker(value []byte, crc [4]byte) {
+func (o *keyValue) magicChecker(getFooter [13]byte) bool {
+	var magCheck bool
+	if getFooter[0] == byte(175) {
+		magCheck = true
+	} else {
+		magCheck = false
+	}
+	return magCheck
+}
+
+func (o *keyValue) crcChecker(value []byte, getFooter [13]byte) {
 	//checks to make sure the crc correct
-	val := value[0 : len(value)-12]
+	var getCrc [4]byte
+	for i := 0; i < 4; i++ {
+		getCrc[i] = getFooter[i+1]
+	}
+	val := value[0 : len(value)-len(getFooter)]
 	check := crc32.ChecksumIEEE(val)
 	checkArr := toByteArray(check)
-	if checkArr == crc {
+	if checkArr == getCrc {
 		o.crcCheck = true
 	}
 	if !o.crcCheck {
-		log.Fatal("the crc check was ", o.crcCheck, crc, checkArr)
+		log.Fatal("the crc check was ", o.crcCheck, getCrc, checkArr)
 	}
 }
 
@@ -188,43 +223,44 @@ func toBigByteArray(i uint64) (arr [8]byte) {
 	return
 }
 
-func test(amount int, concurrency int, c int, keySize int, keyPrefix string, valueSize int, putPercentage float64, client clientv3.Client, ran []uint32, wg *sync.WaitGroup) {
-	for i := 0; i < (amount / concurrency); i++ {
-		kv := keyValue{
-			keySize:   keySize,
-			keyPre:    []byte(keyPrefix),
-			valueSize: valueSize,
-			client:    client,
+func (conf config) execute(c int, ran []uint32, wg *sync.WaitGroup) {
+	// if wg is not sent into the method like this it doesnt work
+	for i := 0; i < (*conf.amount / *conf.concurrency); i++ {
+		conf.kv = keyValue{
+			keySize:   *conf.keySize,
+			keyPre:    []byte(*conf.keyPrefix),
+			valueSize: *conf.valueSize,
+			client:    conf.client,
 			randVal:   toByteArray(ran[i]),
-			count:     uint32((amount/concurrency)*c + i),
+			count:     uint32((*conf.amount / *conf.concurrency)*c + i),
 		}
-		if float64(i) < float64(amount/concurrency)*(putPercentage) {
-			kv.createKV(0)
-			kv.sendClientPut()
+		if float64(i) < float64(*conf.amount / *conf.concurrency)*(*conf.putPercentage) {
+			conf.kv.createKV(0)
+			conf.kv.sendClientPut()
 		} else {
-			kv.createKV(1)
-			kv.sendClientGet()
+			conf.kv.createKV(1)
+			conf.kv.sendClientGet()
 		}
 	}
 	defer wg.Done()
 }
 
-func remainder(amount int, concurrency int, keySize int, keyPrefix string, valueSize int, putPercentage float64, client clientv3.Client, rSeed rand.Rand) {
-	for i := 0; i < (amount % concurrency); i++ {
-		kv := keyValue{
-			keySize:   keySize,
-			keyPre:    []byte(keyPrefix),
-			valueSize: valueSize,
-			client:    client,
-			randVal:   toByteArray(rSeed.Uint32()),
-			count:     uint32((amount/concurrency)*(concurrency) + i),
+func (conf config) remainder() {
+	for i := 0; i < (*conf.amount % *conf.concurrency); i++ {
+		conf.kv = keyValue{
+			keySize:   *conf.keySize,
+			keyPre:    []byte(*conf.keyPrefix),
+			valueSize: *conf.valueSize,
+			client:    conf.client,
+			randVal:   toByteArray(conf.rSeed.Uint32()),
+			count:     uint32((*conf.amount / *conf.concurrency)*(*conf.concurrency) + i),
 		}
-		if float64(i) < float64(amount%concurrency)*(putPercentage) {
-			kv.createKV(0)
-			kv.sendClientPut()
+		if float64(i) < float64(*conf.amount%*conf.concurrency)*(*conf.putPercentage) {
+			conf.kv.createKV(0)
+			conf.kv.sendClientPut()
 		} else {
-			kv.createKV(1)
-			kv.sendClientGet()
+			conf.kv.createKV(1)
+			conf.kv.sendClientGet()
 		}
 	}
 }
@@ -238,7 +274,7 @@ func (conf *config) randSetUp(rSeed *rand.Rand) []uint32 {
 }
 
 func main() {
-	fmt.Println("starting the app...")
+	log.Info("starting the app...")
 	conf := config{
 		putPercentage: flag.Float64("pp", 0.50, "percentage of puts versus gets. 0.50 means 50% put 50% get"),
 		valueSize:     flag.Int("vs", 0, "size of the value in bytes. min:16 bytes. ‘0’ means that the size is random"),
@@ -249,15 +285,15 @@ func main() {
 		concurrency:   flag.Int("c", 1, "The number of concurrent etcd which may be outstanding at any one time"),
 		endpoints:     flag.String("ep", "http://127.0.0.100:2380,http://127.0.0.101:2380,http://127.0.0.102:2380,http://127.0.0.103:2380,http://127.0.0.104:2380", "endpoints seperated by comas ex.http://127.0.0.100:2380,http://127.0.0.101:2380"),
 	}
-	rSeed, client, timer, wg := conf.setUp()
+	conf.setUp()
 	for c := 0; c < *conf.concurrency; c++ {
-		ran := conf.randSetUp(rSeed)
-		timer = time.Now()
-		go test(*conf.amount, *conf.concurrency, c, *conf.keySize, *conf.keyPrefix, *conf.valueSize, *conf.putPercentage, client, ran, wg)
+		ran := conf.randSetUp(conf.rSeed)
+		conf.timer = time.Now()
+		go conf.execute(c, ran, &conf.wg)
 		time.Sleep(1000)
 	}
 	if (*conf.amount % *conf.concurrency) != 0 {
-		remainder(*conf.amount, *conf.concurrency, *conf.keySize, *conf.keyPrefix, *conf.valueSize, *conf.putPercentage, client, *rSeed)
+		conf.remainder()
 	}
-	conf.exitApp(wg, timer, client)
+	conf.exitApp()
 }

@@ -13,10 +13,10 @@ func TestCrc(t *testing.T) {
 	}
 	kv.randVal = toByteArray(uint32(0)) // randval determines what the value is filled with
 	kv.createValue()
-	kv.applyCrc()
+	kv.applyFooter()
 	var crc [4]byte
 	for i := 0; i < 4; i++ {
-		crc[i] = kv.valForPut[10000+i]
+		crc[i] = kv.valForPut[10001+i]
 	}
 
 	// makes sure each bit is 0
@@ -27,8 +27,8 @@ func TestCrc(t *testing.T) {
 	}
 
 	// makes sure the size is corrects
-	if len(kv.valForPut) != (kv.valueSize + 4) {
-		t.Errorf("value not the correct size %d", kv.value.Len())
+	if len(kv.valForPut) != (kv.valueSize + 5) {
+		t.Errorf("value not the correct size %d it was %v", kv.value.Len(), len(kv.valForPut))
 	}
 
 	var fakeGet bytes.Buffer
@@ -41,7 +41,8 @@ func TestCrc(t *testing.T) {
 
 	crc_on_get := crc32.ChecksumIEEE(fakeGet.Bytes())
 	getcrcArr := toByteArray(crc_on_get)
-	get := append(fakeGet.Bytes(), getcrcArr[:]...)
+	get := append(fakeGet.Bytes(), byte(175))
+	get = append(get, getcrcArr[:]...)
 
 	// compares the crc
 	if getcrcArr != crc {
