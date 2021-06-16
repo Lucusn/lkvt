@@ -29,7 +29,7 @@ jobs:
     - name: Install clientv3
       run: |
        go version
-       go get -u github.com/etcd-io/etcd/
+       go get -u go.etcd.io/etcd/
 
     - name: Test
       run: go test ./...
