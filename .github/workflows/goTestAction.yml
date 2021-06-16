@@ -26,10 +26,20 @@ jobs:
        go version
        go get -u github.com/sirupsen/logrus
 
+    - name: Install grpc
+      run: |
+       go version
+       go get -u google.golang.org/grpc@v1.26.0
+
     - name: Install clientv3
       run: |
        go version
        go get -u go.etcd.io/etcd/
+
+    - name: build
+      run: |
+       go version
+       go build
 
     - name: Test
       run: go test ./...
