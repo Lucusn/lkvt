@@ -21,10 +21,14 @@ jobs:
     
     - uses: actions/checkout@v2
 
-    - name: Install dependencies
+    - name: Install logrus
       run: |
        go version
        go get -u github.com/sirupsen/logrus
+
+    - name: Install clientv3
+      run: |
+       go version
        go get -u go.etcd.io/etcd/clientv3
 
     - name: Test
