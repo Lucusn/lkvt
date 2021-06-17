@@ -34,7 +34,7 @@ jobs:
     - name: Install clientv3
       run: |
        go version
-       go get -u go.etcd.io/etcd/
+       go get go.etcd.io/etcd/clientv3
 
     - name: build
       run: |
