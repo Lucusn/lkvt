@@ -7,10 +7,12 @@ import (
 	"flag"
 	"hash/crc32"
 	"math/rand"
+	"os"
 	"strings"
 	"sync"
 	"time"
 
+	"github.com/aybabtme/uniplot/histogram"
 	log "github.com/sirupsen/logrus"
 	"go.etcd.io/etcd/clientv3"
 )
@@ -85,14 +87,31 @@ func (conf *config) setUp() {
 func (conf *config) exitApp() {
 	conf.wg.Wait()
 	conf.client.Close()
+	var floatPut = make([]float64, len(conf.putTimes))
+	for i := 0; i < len(floatPut); i++ {
+		floatPut[i] = float64(conf.putTimes[i].Milliseconds())
+	}
+	var floatGet = make([]float64, len(conf.getTimes))
+	for i := 0; i < len(floatGet); i++ {
+		floatGet[i] = float64(conf.getTimes[i].Milliseconds())
+	}
+	hPut := histogram.Hist(9, floatPut)
+	hGet := histogram.Hist(9, floatGet)
+
 	log.WithFields(log.Fields{
-		"operations completed": *conf.amount,
-		"seconds":              (float64(sumTime(conf.putTimes).Seconds()) / float64(*conf.concurrency)) + (float64(sumTime(conf.getTimes).Seconds()) / float64(*conf.concurrency)),
-		"time for puts":        float64(sumTime(conf.putTimes).Seconds()) / float64(*conf.concurrency),
-		"time for gets":        float64(sumTime(conf.getTimes).Seconds()) / float64(*conf.concurrency),
-		"put per sec":          (*conf.putPercentage * float64(*conf.amount)) / (float64(sumTime(conf.putTimes).Seconds()) / float64(*conf.concurrency)),
-		"get per sec":          (((*conf.putPercentage - 1) * -1) * float64(*conf.amount)) / (float64(sumTime(conf.getTimes).Seconds()) / float64(*conf.concurrency)),
+		"\noperations completed": *conf.amount,
+		"\nseconds":              (float64(sumTime(conf.putTimes).Seconds()) / float64(*conf.concurrency)) + (float64(sumTime(conf.getTimes).Seconds()) / float64(*conf.concurrency)),
+		"\ntime for puts":        float64(sumTime(conf.putTimes).Seconds()) / float64(*conf.concurrency),
+		"\ntime for gets":        float64(sumTime(conf.getTimes).Seconds()) / float64(*conf.concurrency),
+		"\nput per sec":          (*conf.putPercentage * float64(*conf.amount)) / (float64(sumTime(conf.putTimes).Seconds()) / float64(*conf.concurrency)),
+		"\nget per sec":          (((*conf.putPercentage - 1) * -1) * float64(*conf.amount)) / (float64(sumTime(conf.getTimes).Seconds()) / float64(*conf.concurrency)),
+		"\naverage ms per put":   (float64(sumTime(conf.putTimes).Milliseconds()) / float64(*conf.amount)),
+		"\naverage ms per get":   (float64(sumTime(conf.getTimes).Milliseconds()) / float64(*conf.amount)),
 	}).Info("done")
+	log.Info("ms latency for puts")
+	histogram.Fprint(os.Stdout, hPut, histogram.Linear(5))
+	log.Info("ms latency for gets")
+	histogram.Fprint(os.Stdout, hGet, histogram.Linear(5))
 }
 
 func sumTime(array []time.Duration) time.Duration {
