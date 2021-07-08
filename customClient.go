@@ -12,10 +12,17 @@ import (
 	"sync"
 	"time"
 
+	"niovakv/clientapi"
+
 	"github.com/aybabtme/uniplot/histogram"
 	log "github.com/sirupsen/logrus"
 	"go.etcd.io/etcd/clientv3"
 )
+
+// told to do a go get for client api amd greetred with the following
+// go get: niovakv/clientapi@none updating to
+// 	niovakv/clientapi@v0.0.0-00010101000000-000000000000 requires
+// 	niovakv/httpclient@v0.0.0-00010101000000-000000000000: malformed module path "niovakv/httpclient": missing dot in first path element
 
 type keyValue struct {
 	key       bytes.Buffer
@@ -47,16 +54,23 @@ type config struct {
 	seed          *int64
 	concurrency   *int
 	endpoints     *string
+	database      *string
 	rSeed         *rand.Rand
 	client        clientv3.Client
 	putTimes      []time.Duration
 	getTimes      []time.Duration
 	wg            sync.WaitGroup
+	addr          string
+	port          string
 }
 
 func (conf *config) setUp() {
 	flag.Parse()
 	endpts := strings.Split(*conf.endpoints, ",")
+	addrandport := strings.Split(endpts[0], "/")
+	addrport := strings.Split(addrandport[2], ":")
+	conf.addr = addrport[0]
+	conf.port = addrport[1]
 
 	//random number generator for seed
 	conf.rSeed = rand.New(rand.NewSource(*conf.seed))
@@ -162,7 +176,7 @@ func createclient(endpoint []string) (clientv3.Client, error) {
 	return *cli, err
 }
 
-func (o *keyValue) sendClientPut() {
+func (o *keyValue) etcdPut() {
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	o.footer.timeUnix = time.Now().UnixNano()
 	time := toBigByteArray(uint64(o.footer.timeUnix))
@@ -176,7 +190,24 @@ func (o *keyValue) sendClientPut() {
 	cancel()
 }
 
-func (o *keyValue) sendClientGet() {
+func (o *keyValue) niovaPut(addr string, port string) {
+	nkvc := clientapi.NiovakvClient{
+		ReqObj.InputOps:   "write",
+		ReqObj.InputKey:   o.key.String(),
+		ReqObj.InputValue: o.valForPut,
+		Addr:              addr,
+		Port:              port,
+	}
+	putStatus := nkvc.Put()
+	log.WithFields(log.Fields{
+		"kv.key":                o.key,
+		"put value":             string(o.valForPut),
+		"time of put Unix nano": o.footer.timeUnix,
+		"put status":            putStatus,
+	}).Debug("put")
+}
+
+func (o *keyValue) etcdGet() {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	gr, _ := o.client.Get(ctx, o.key.String())
 	cancel()
@@ -194,6 +225,28 @@ func (o *keyValue) sendClientGet() {
 		log.Fatal("magic check failes. ", getFooter[0], byte(175))
 	}
 
+}
+
+func (o *keyValue) niovaGet(addr string, port string) {
+	nkvc := clientapi.NiovakvClient{
+		ReqObj.InputOps: "read",
+		ReqObj.InputKey: o.key.String(),
+		Addr:            addr,
+		Port:            port,
+	}
+	getVal := nkvc.Get()
+	log.WithFields(log.Fields{
+		"get key":               o.key.String(),
+		"get value":             getVal,
+		"time of get Unix nano": o.footer.timeUnix,
+	}).Debug("get")
+	getFooter := getFooter(getVal)
+	magCheck := o.magicChecker(getFooter)
+	if magCheck {
+		o.crcChecker(getVal, getFooter)
+	} else {
+		log.Fatal("magic check failes. ", getFooter[0], byte(175))
+	}
 }
 
 func getFooter(getVal []byte) [13]byte {
@@ -261,23 +314,43 @@ func (conf *config) execute(c int, ran []uint32, wg *sync.WaitGroup) {
 			randVal:   toByteArray(ran[i]),
 			count:     uint32((*conf.amount / *conf.concurrency)*c + i),
 		}
+		etcd := "etcd"
 		if float64(i) < float64(*conf.amount / *conf.concurrency)*(*conf.putPercentage) {
 			kv.createKV(0)
-			putTimer := time.Now()
-			kv.sendClientPut()
-			// end put timer
-			stopPutTime := time.Since(putTimer)
-			// add time to put array
-			conf.putTimes = append(conf.putTimes, stopPutTime)
+			if *conf.database == etcd {
+				putTimer := time.Now()
+				kv.etcdPut()
+				// end put timer
+				stopPutTime := time.Since(putTimer)
+				// add time to put array
+				conf.putTimes = append(conf.putTimes, stopPutTime)
+			} else {
+				putTimer := time.Now()
+				kv.niovaPut(conf.addr, conf.port)
+				// end put timer
+				stopPutTime := time.Since(putTimer)
+				// add time to put array
+				conf.putTimes = append(conf.putTimes, stopPutTime)
+			}
+
 		} else {
-			kv.createKV(1)
-			//start get timer
-			getTimer := time.Now()
-			kv.sendClientGet()
-			// end get timer
-			stopGetTime := time.Since(getTimer)
-			// add time to get array
-			conf.getTimes = append(conf.getTimes, stopGetTime)
+			if *conf.database == etcd {
+				kv.createKV(1)
+				//start get timer
+				getTimer := time.Now()
+				kv.etcdGet()
+				// end get timer
+				stopGetTime := time.Since(getTimer)
+				// add time to get array
+				conf.getTimes = append(conf.getTimes, stopGetTime)
+			} else {
+				getTimer := time.Now()
+				kv.niovaGet(conf.addr, conf.port)
+				// end Get timer
+				stopGetTime := time.Since(getTimer)
+				// add time to Get array
+				conf.getTimes = append(conf.getTimes, stopGetTime)
+			}
 		}
 	}
 	defer wg.Done()
@@ -293,24 +366,44 @@ func (conf *config) remainder() {
 			randVal:   toByteArray(conf.rSeed.Uint32()),
 			count:     uint32((*conf.amount / *conf.concurrency)*(*conf.concurrency) + i),
 		}
+		etcd := "etcd"
 		if float64(i) < float64(*conf.amount%*conf.concurrency)*(*conf.putPercentage) {
 			kv.createKV(0)
-			// start put timer
-			putTimer := time.Now()
-			kv.sendClientPut()
-			// end put timer
-			stopPutTime := time.Since(putTimer)
-			// add time to put array
-			conf.putTimes = append(conf.putTimes, stopPutTime)
+			etcd := "etcd"
+			if *conf.database == etcd {
+				putTimer := time.Now()
+				kv.etcdPut()
+				// end put timer
+				stopPutTime := time.Since(putTimer)
+				// add time to put array
+				conf.putTimes = append(conf.putTimes, stopPutTime)
+			} else {
+				putTimer := time.Now()
+				kv.niovaPut(conf.addr, conf.port)
+				// end put timer
+				stopPutTime := time.Since(putTimer)
+				// add time to put array
+				conf.putTimes = append(conf.putTimes, stopPutTime)
+			}
+
 		} else {
-			kv.createKV(1)
-			//start get timer
-			getTimer := time.Now()
-			kv.sendClientGet()
-			// end get timer
-			stopGetTime := time.Since(getTimer)
-			// add time to get array
-			conf.getTimes = append(conf.getTimes, stopGetTime)
+			if *conf.database == etcd {
+				kv.createKV(1)
+				//start get timer
+				getTimer := time.Now()
+				kv.etcdGet()
+				// end get timer
+				stopGetTime := time.Since(getTimer)
+				// add time to get array
+				conf.getTimes = append(conf.getTimes, stopGetTime)
+			} else {
+				getTimer := time.Now()
+				kv.niovaGet(conf.addr, conf.port)
+				// end Get timer
+				stopGetTime := time.Since(getTimer)
+				// add time to Get array
+				conf.getTimes = append(conf.getTimes, stopGetTime)
+			}
 		}
 	}
 }
@@ -334,6 +427,7 @@ func main() {
 		seed:          flag.Int64("s", time.Now().UnixNano(), "seed to the random number generator"),
 		concurrency:   flag.Int("c", 1, "The number of concurrent etcd which may be outstanding at any one time"),
 		endpoints:     flag.String("ep", "http://127.0.0.100:2380,http://127.0.0.101:2380,http://127.0.0.102:2380,http://127.0.0.103:2380,http://127.0.0.104:2380", "endpoints seperated by comas ex.http://127.0.0.100:2380,http://127.0.0.101:2380"),
+		database:      flag.String("d", "pmdb", "the database you would like to use (pmdb or etcd)"),
 	}
 	conf.setUp()
 	for c := 0; c < *conf.concurrency; c++ {
