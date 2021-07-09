@@ -1,0 +1,45 @@
+name: Test
+
+on:
+  push:
+    branches: 
+      - initial-branch
+  pull_request:
+    branches: 
+      - initial-branch
+
+jobs:
+  test:
+
+    runs-on: ubuntu-latest
+
+    steps:
+    - name: Install go
+      uses: actions/setup-go@v2
+      with:
+        go-version: 1.15
+    
+    - uses: actions/checkout@v2
+
+    - name: Install logrus
+      run: |
+       go version
+       go get -u github.com/sirupsen/logrus
+
+    - name: Install grpc
+      run: |
+       go version
+       go get -u google.golang.org/grpc@v1.26.0
+
+    - name: Install clientv3
+      run: |
+       go version
+       go get go.etcd.io/etcd/clientv3
+
+    - name: build
+      run: |
+       go version
+       go build
+
+    - name: Test
+      run: go test ./...
