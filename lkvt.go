@@ -59,11 +59,15 @@ type config struct {
 	wg            sync.WaitGroup
 	addr          string
 	port          string
+	lastCon       int
 }
 
 func (conf *config) setUp() {
 	flag.Parse()
+	conf.lastCon = *conf.concurrency - 1
 	endpts := strings.Split(*conf.endpoints, ",")
+
+	//this should cycle for each endpnt and there should be an arr of ports and addr
 	addrandport := strings.Split(endpts[0], "/")
 	addrport := strings.Split(addrandport[2], ":")
 	conf.addr = addrport[0]
@@ -309,18 +313,18 @@ func toBigByteArray(i uint64) (arr [8]byte) {
 }
 
 func (conf *config) execute(c int, ran []uint32, wg *sync.WaitGroup) {
-	// if wg is not sent into the method like this it doesnt work
-	for i := 0; i < (*conf.amount / *conf.concurrency); i++ {
+	n := conf.setn(c)
+	for i := 0; i < (n); i++ {
 		kv := keyValue{
 			keySize:   *conf.keySize,
 			keyPre:    []byte(*conf.keyPrefix),
 			valueSize: *conf.valueSize,
 			client:    conf.client,
 			randVal:   toByteArray(ran[i]),
-			count:     uint32((*conf.amount / *conf.concurrency)*c + i),
+			count:     uint32((n)*c + i),
 		}
 		etcd := "etcd"
-		if float64(i) < float64(*conf.amount / *conf.concurrency)*(*conf.putPercentage) {
+		if float64(i) < float64(n)*(*conf.putPercentage) {
 			kv.createKV(0)
 			if *conf.database == etcd {
 				putTimer := time.Now()
@@ -361,64 +365,21 @@ func (conf *config) execute(c int, ran []uint32, wg *sync.WaitGroup) {
 	defer wg.Done()
 }
 
-func (conf *config) remainder() {
-	for i := 0; i < (*conf.amount % *conf.concurrency); i++ {
-		kv := keyValue{
-			keySize:   *conf.keySize,
-			keyPre:    []byte(*conf.keyPrefix),
-			valueSize: *conf.valueSize,
-			client:    conf.client,
-			randVal:   toByteArray(conf.rSeed.Uint32()),
-			count:     uint32((*conf.amount / *conf.concurrency)*(*conf.concurrency) + i),
-		}
-		etcd := "etcd"
-		if float64(i) < float64(*conf.amount%*conf.concurrency)*(*conf.putPercentage) {
-			kv.createKV(0)
-			etcd := "etcd"
-			if *conf.database == etcd {
-				putTimer := time.Now()
-				kv.etcdPut()
-				// end put timer
-				stopPutTime := time.Since(putTimer)
-				// add time to put array
-				conf.putTimes = append(conf.putTimes, stopPutTime)
-			} else {
-				putTimer := time.Now()
-				kv.niovaPut(conf.addr, conf.port)
-				// end put timer
-				stopPutTime := time.Since(putTimer)
-				// add time to put array
-				conf.putTimes = append(conf.putTimes, stopPutTime)
-			}
-
-		} else {
-			if *conf.database == etcd {
-				kv.createKV(1)
-				//start get timer
-				getTimer := time.Now()
-				kv.etcdGet()
-				// end get timer
-				stopGetTime := time.Since(getTimer)
-				// add time to get array
-				conf.getTimes = append(conf.getTimes, stopGetTime)
-			} else {
-				getTimer := time.Now()
-				kv.niovaGet(conf.addr, conf.port)
-				// end Get timer
-				stopGetTime := time.Since(getTimer)
-				// add time to Get array
-				conf.getTimes = append(conf.getTimes, stopGetTime)
-			}
-		}
-	}
-}
-
-func (conf *config) randSetUp(rSeed *rand.Rand) []uint32 {
-	var ran = make([]uint32, *conf.amount / *conf.concurrency)
-	for i := 0; i < (*conf.amount / *conf.concurrency); i++ {
+func (conf *config) randSetUp(c int, rSeed *rand.Rand) []uint32 {
+	n := conf.setn(c)
+	var ran = make([]uint32, n)
+	for i := 0; i < (n); i++ {
 		ran[i] = rSeed.Uint32()
 	}
 	return ran
+}
+
+func (conf *config) setn(c int) int {
+	n := (*conf.amount / *conf.concurrency)
+	if c == conf.lastCon {
+		n = (*conf.amount / *conf.concurrency) + (*conf.amount % *conf.concurrency)
+	}
+	return n
 }
 
 func main() {
@@ -436,12 +397,9 @@ func main() {
 	}
 	conf.setUp()
 	for c := 0; c < *conf.concurrency; c++ {
-		ran := conf.randSetUp(conf.rSeed)
+		ran := conf.randSetUp(c, conf.rSeed)
 		go conf.execute(c, ran, &conf.wg)
 		time.Sleep(1000)
-	}
-	if (*conf.amount % *conf.concurrency) != 0 {
-		conf.remainder()
 	}
 	conf.exitApp()
 }
