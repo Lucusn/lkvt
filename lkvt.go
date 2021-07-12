@@ -51,7 +51,7 @@ type config struct {
 	seed          *int64
 	concurrency   *int
 	endpoints     *string
-	database      *string
+	database      *int
 	rSeed         *rand.Rand
 	client        clientv3.Client
 	putTimes      []time.Duration
@@ -321,51 +321,48 @@ func (conf *config) execute(c int, ran []uint32, wg *sync.WaitGroup) {
 			randVal:   toByteArray(ran[i]),
 			count:     uint32((*conf.amount / *conf.concurrency)*c + i + 1),
 		}
-		//replace with enum?
-		etcd := "etcd"
-		//
-		// attempt to change put/get comparison to count
 		if float64(kv.count) <= float64(*conf.amount)*(*conf.putPercentage) {
 			kv.opType = 0
-			kv.createKV()
-			if *conf.database == etcd {
-				putTimer := time.Now()
-				kv.etcdPut()
-				// end put timer
-				stopPutTime := time.Since(putTimer)
-				// add time to put array
-				conf.putTimes = append(conf.putTimes, stopPutTime)
-			} else {
-				putTimer := time.Now()
-				kv.niovaPut(conf.addr, conf.port)
-				// end put timer
-				stopPutTime := time.Since(putTimer)
-				// add time to put array
-				conf.putTimes = append(conf.putTimes, stopPutTime)
-			}
-
 		} else {
 			kv.opType = 1
-			kv.createKV()
-			if *conf.database == etcd {
-				//start get timer
-				getTimer := time.Now()
-				kv.etcdGet()
-				// end get timer
-				stopGetTime := time.Since(getTimer)
-				// add time to get array
-				conf.getTimes = append(conf.getTimes, stopGetTime)
-			} else {
-				getTimer := time.Now()
-				kv.niovaGet(conf.addr, conf.port)
-				// end Get timer
-				stopGetTime := time.Since(getTimer)
-				// add time to Get array
-				conf.getTimes = append(conf.getTimes, stopGetTime)
-			}
 		}
+		kv.createKV()
+		conf.executeOp(kv)
 	}
 	defer wg.Done()
+}
+
+func (conf *config) executeOp(kv keyValue) {
+	timer := time.Now()
+	//do operation
+	switch kv.opType {
+	case 0:
+		conf.lkvtPut(kv)
+		stopPutTime := time.Since(timer)
+		conf.putTimes = append(conf.putTimes, stopPutTime)
+	case 1:
+		conf.lkvtGet(kv)
+		stopGetTime := time.Since(timer)
+		conf.getTimes = append(conf.getTimes, stopGetTime)
+	}
+}
+
+func (conf *config) lkvtPut(kv keyValue) {
+	switch *conf.database {
+	case 0:
+		kv.niovaPut(conf.addr, conf.port)
+	case 1:
+		kv.etcdPut()
+	}
+}
+
+func (conf *config) lkvtGet(kv keyValue) {
+	switch *conf.database {
+	case 0:
+		kv.niovaGet(conf.addr, conf.port)
+	case 1:
+		kv.etcdGet()
+	}
 }
 
 func (conf *config) randSetUp(c int, rSeed *rand.Rand) []uint32 {
@@ -396,7 +393,7 @@ func main() {
 		seed:          flag.Int64("s", time.Now().UnixNano(), "seed to the random number generator"),
 		concurrency:   flag.Int("c", 1, "The number of concurrent etcd which may be outstanding at any one time"),
 		endpoints:     flag.String("ep", "http://127.0.0.100:2380,http://127.0.0.101:2380,http://127.0.0.102:2380,http://127.0.0.103:2380,http://127.0.0.104:2380", "endpoints seperated by comas ex.http://127.0.0.100:2380,http://127.0.0.101:2380"),
-		database:      flag.String("d", "pmdb", "the database you would like to use (pmdb or etcd)"),
+		database:      flag.Int("d", 0, "the database you would like to use (0 = pmdb 1 = etcd)"),
 	}
 	conf.setUp()
 	for c := 0; c < *conf.concurrency; c++ {
