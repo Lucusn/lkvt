@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/binary"
 	"flag"
+	"fmt"
 	"hash/crc32"
 	"math/rand"
 	"os"
@@ -13,6 +14,7 @@ import (
 	"time"
 
 	"niovakv/clientapi"
+	"niovakv/niovakvlib"
 
 	"github.com/aybabtme/uniplot/histogram"
 	log "github.com/sirupsen/logrus"
@@ -191,13 +193,16 @@ func (o *keyValue) etcdPut() {
 }
 
 func (o *keyValue) niovaPut(addr string, port string) {
-	nkvc := clientapi.NiovakvClient{
-		ReqObj.InputOps:   "write",
-		ReqObj.InputKey:   o.key.String(),
-		ReqObj.InputValue: o.valForPut,
-		Addr:              addr,
-		Port:              port,
+	reqObj := niovakvlib.NiovaKV{
+		InputKey:   o.key.String(),
+		InputValue: o.valForPut,
 	}
+	nkvc := clientapi.NiovakvClient{
+		ReqObj: &reqObj,
+		Addr:   addr,
+		Port:   port,
+	}
+
 	putStatus := nkvc.Put()
 	log.WithFields(log.Fields{
 		"kv.key":                o.key,
@@ -228,13 +233,17 @@ func (o *keyValue) etcdGet() {
 }
 
 func (o *keyValue) niovaGet(addr string, port string) {
-	nkvc := clientapi.NiovakvClient{
-		ReqObj.InputOps: "read",
-		ReqObj.InputKey: o.key.String(),
-		Addr:            addr,
-		Port:            port,
+	reqObj := niovakvlib.NiovaKV{
+		InputKey: o.key.String(),
 	}
+	nkvc := clientapi.NiovakvClient{
+		ReqObj: &reqObj,
+		Addr:   addr,
+		Port:   port,
+	}
+	nkvc.ReqObj.InputKey = o.key.String()
 	getVal := nkvc.Get()
+	fmt.Println(getVal)
 	log.WithFields(log.Fields{
 		"get key":               o.key.String(),
 		"get value":             getVal,
@@ -247,6 +256,7 @@ func (o *keyValue) niovaGet(addr string, port string) {
 	} else {
 		log.Fatal("magic check failes. ", getFooter[0], byte(175))
 	}
+	fmt.Println(getVal)
 }
 
 func getFooter(getVal []byte) [13]byte {
