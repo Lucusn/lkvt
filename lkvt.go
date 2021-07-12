@@ -33,6 +33,7 @@ type keyValue struct {
 	client    clientv3.Client
 	footer    kvFooter
 	count     uint32
+	opType    int
 }
 
 type kvFooter struct {
@@ -137,9 +138,9 @@ func sumTime(array []time.Duration) time.Duration {
 	return result
 }
 
-func (o *keyValue) createKV(op int) {
+func (o *keyValue) createKV() {
 	o.createKey()
-	if op == 0 {
+	if o.opType == 0 {
 		o.createValue()
 	}
 }
@@ -179,9 +180,6 @@ func createclient(endpoint []string) (clientv3.Client, error) {
 
 func (o *keyValue) etcdPut() {
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-	o.footer.timeUnix = time.Now().UnixNano()
-	time := toBigByteArray(uint64(o.footer.timeUnix))
-	o.valForPut = append(o.valForPut, time[:]...)
 	o.client.Put(ctx, o.key.String(), string(o.valForPut))
 	log.WithFields(log.Fields{
 		"kv.key":                o.key,
@@ -267,12 +265,15 @@ func getFooter(getVal []byte) [13]byte {
 }
 
 func (o *keyValue) applyFooter() {
-	o.footer.footID = byte(175) // magic number
-	o.valForPut = append(o.value.Bytes(), o.footer.footID)
+	o.footer.footID = byte(175)
+	o.valForPut = append(o.value.Bytes(), o.footer.footID) // magic number added to value
 	crc := crc32.ChecksumIEEE(o.value.Bytes())
 	crcArr := toByteArray(crc)
-	o.valForPut = append(o.valForPut, crcArr[:]...)
+	o.valForPut = append(o.valForPut, crcArr[:]...) //crc added to value
 	o.footer.crc = crc
+	o.footer.timeUnix = time.Now().UnixNano()
+	time := toBigByteArray(uint64(o.footer.timeUnix))
+	o.valForPut = append(o.valForPut, time[:]...) //time of creation added to value
 }
 
 func (o *keyValue) magicChecker(getFooter [13]byte) bool {
@@ -323,9 +324,12 @@ func (conf *config) execute(c int, ran []uint32, wg *sync.WaitGroup) {
 			randVal:   toByteArray(ran[i]),
 			count:     uint32((n)*c + i),
 		}
+		//replace with enum?
 		etcd := "etcd"
+		//
 		if float64(i) < float64(n)*(*conf.putPercentage) {
-			kv.createKV(0)
+			kv.opType = 0
+			kv.createKV()
 			if *conf.database == etcd {
 				putTimer := time.Now()
 				kv.etcdPut()
@@ -343,8 +347,9 @@ func (conf *config) execute(c int, ran []uint32, wg *sync.WaitGroup) {
 			}
 
 		} else {
+			kv.opType = 0
+			kv.createKV()
 			if *conf.database == etcd {
-				kv.createKV(1)
 				//start get timer
 				getTimer := time.Now()
 				kv.etcdGet()
