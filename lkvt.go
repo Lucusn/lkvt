@@ -5,7 +5,6 @@ import (
 	"context"
 	"encoding/binary"
 	"flag"
-	"fmt"
 	"hash/crc32"
 	"math/rand"
 	"os"
@@ -240,7 +239,6 @@ func (o *keyValue) niovaGet(addr string, port string) {
 	}
 	nkvc.ReqObj.InputKey = o.key.String()
 	getVal := nkvc.Get()
-	fmt.Println(getVal)
 	log.WithFields(log.Fields{
 		"get key":               o.key.String(),
 		"get value":             getVal,
@@ -253,7 +251,6 @@ func (o *keyValue) niovaGet(addr string, port string) {
 	} else {
 		log.Fatal("magic check failes. ", getFooter[0], byte(175))
 	}
-	fmt.Println(getVal)
 }
 
 func getFooter(getVal []byte) [13]byte {
@@ -322,12 +319,13 @@ func (conf *config) execute(c int, ran []uint32, wg *sync.WaitGroup) {
 			valueSize: *conf.valueSize,
 			client:    conf.client,
 			randVal:   toByteArray(ran[i]),
-			count:     uint32((n)*c + i),
+			count:     uint32((*conf.amount / *conf.concurrency)*c + i + 1),
 		}
 		//replace with enum?
 		etcd := "etcd"
 		//
-		if float64(i) < float64(n)*(*conf.putPercentage) {
+		// attempt to change put/get comparison to count
+		if float64(kv.count) <= float64(*conf.amount)*(*conf.putPercentage) {
 			kv.opType = 0
 			kv.createKV()
 			if *conf.database == etcd {
@@ -347,7 +345,7 @@ func (conf *config) execute(c int, ran []uint32, wg *sync.WaitGroup) {
 			}
 
 		} else {
-			kv.opType = 0
+			kv.opType = 1
 			kv.createKV()
 			if *conf.database == etcd {
 				//start get timer
