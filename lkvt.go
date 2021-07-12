@@ -21,11 +21,6 @@ import (
 	"go.etcd.io/etcd/clientv3"
 )
 
-// told to do a go get for client api amd greetred with the following
-// go get: niovakv/clientapi@none updating to
-// 	niovakv/clientapi@v0.0.0-00010101000000-000000000000 requires
-// 	niovakv/httpclient@v0.0.0-00010101000000-000000000000: malformed module path "niovakv/httpclient": missing dot in first path element
-
 type keyValue struct {
 	key       bytes.Buffer
 	value     bytes.Buffer
