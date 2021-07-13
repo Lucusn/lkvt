@@ -218,12 +218,16 @@ func (o *keyValue) etcdGet() {
 		"get value":             getVal,
 		"time of get Unix nano": o.footer.timeUnix,
 	}).Debug("get")
-	getFooter := getFooter(getVal)
-	magCheck := o.magicChecker(getFooter)
-	if magCheck {
-		o.crcChecker(getVal, getFooter)
+	if len(getVal) > 0 {
+		getFooter := getFooter(getVal)
+		magCheck := o.magicChecker(getFooter)
+		if magCheck {
+			o.crcChecker(getVal, getFooter)
+		} else {
+			log.Error("magic check failes. ", getFooter[0], byte(175))
+		}
 	} else {
-		log.Fatal("magic check failes. ", getFooter[0], byte(175))
+		log.Error("get was empty:", getVal)
 	}
 
 }
@@ -244,13 +248,18 @@ func (o *keyValue) niovaGet(addr string, port string) {
 		"get value":             getVal,
 		"time of get Unix nano": o.footer.timeUnix,
 	}).Debug("get")
-	getFooter := getFooter(getVal)
-	magCheck := o.magicChecker(getFooter)
-	if magCheck {
-		o.crcChecker(getVal, getFooter)
+	if len(getVal) > 0 {
+		getFooter := getFooter(getVal)
+		magCheck := o.magicChecker(getFooter)
+		if magCheck {
+			o.crcChecker(getVal, getFooter)
+		} else {
+			log.Fatal("magic check failes. ", getFooter[0], byte(175))
+		}
 	} else {
-		log.Fatal("magic check failes. ", getFooter[0], byte(175))
+		log.Error("get was empty:", getVal)
 	}
+
 }
 
 func getFooter(getVal []byte) [13]byte {
