@@ -146,6 +146,7 @@ func (o *keyValue) createKV() {
 
 func (o *keyValue) createKey() {
 	o.key.Write(o.keyPre)
+	// convert o.count to string for byte array
 	countArr := toByteArray(o.count)
 	o.key.WriteByte(byte('.'))
 	for o.key.Len() < o.keySize {
@@ -397,10 +398,10 @@ func main() {
 		putPercentage: flag.Float64("pp", 0.50, "percentage of puts versus gets. 0.50 means 50% put 50% get"),
 		valueSize:     flag.Int("vs", 0, "size of the value in bytes. min:16 bytes. ‘0’ means that the size is random"),
 		keySize:       flag.Int("ks", 0, "size of the key in bytes. min:1 byte. ‘0’ means that the size is random"),
-		amount:        flag.Int("n", 1, "number of KVs to operate on"),
+		amount:        flag.Int("n", 1, "number of operations"),
 		keyPrefix:     flag.String("kp", "key", "specify a key prefix"),
 		seed:          flag.Int64("s", time.Now().UnixNano(), "seed to the random number generator"),
-		concurrency:   flag.Int("c", 1, "The number of concurrent etcd which may be outstanding at any one time"),
+		concurrency:   flag.Int("c", 1, "The number of concurrent requests which may be outstanding at any one time"),
 		endpoints:     flag.String("ep", "http://127.0.0.100:2380,http://127.0.0.101:2380,http://127.0.0.102:2380,http://127.0.0.103:2380,http://127.0.0.104:2380", "endpoints seperated by comas ex.http://127.0.0.100:2380,http://127.0.0.101:2380"),
 		database:      flag.Int("d", 0, "the database you would like to use (0 = pmdb 1 = etcd)"),
 	}
