@@ -115,7 +115,7 @@ func (conf *config) exitApp() {
 
 	log.WithFields(log.Fields{
 		"\noperations completed": *conf.amount,
-		"\nseconds":              (float64(sumTime(conf.putTimes).Seconds()) / float64(*conf.concurrency)) + (float64(sumTime(conf.getTimes).Seconds()) / float64(*conf.concurrency)),
+		"\nseconds to complete":              (float64(sumTime(conf.putTimes).Seconds()) / float64(*conf.concurrency)) + (float64(sumTime(conf.getTimes).Seconds()) / float64(*conf.concurrency)),
 		"\ntime for puts":        float64(sumTime(conf.putTimes).Seconds()) / float64(*conf.concurrency),
 		"\ntime for gets":        float64(sumTime(conf.getTimes).Seconds()) / float64(*conf.concurrency),
 		"\nput per sec":          (*conf.putPercentage * float64(*conf.amount)) / (float64(sumTime(conf.putTimes).Seconds()) / float64(*conf.concurrency)),
