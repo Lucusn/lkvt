@@ -80,12 +80,10 @@ func (conf *config) setUp() {
 	random := rand.New(rand.NewSource(time.Now().UnixNano()))
 	if *conf.keySize == 0 {
 		*conf.keySize = random.Intn(255-1) + 1
-		//what should the max value be?
 		log.Info("this is the random key size", *conf.keySize)
 	}
 	if *conf.valueSize == 0 {
 		*conf.valueSize = random.Intn(1048576-16) + 16
-		//what should the max value be?
 		log.Info("this is the random value size", *conf.valueSize)
 	} else if *conf.valueSize < 16 {
 		*conf.valueSize = 16
@@ -115,7 +113,7 @@ func (conf *config) exitApp() {
 
 	log.WithFields(log.Fields{
 		"\noperations completed": *conf.amount,
-		"\nseconds to complete":              (float64(sumTime(conf.putTimes).Seconds()) / float64(*conf.concurrency)) + (float64(sumTime(conf.getTimes).Seconds()) / float64(*conf.concurrency)),
+		"\nseconds to complete":  (float64(sumTime(conf.putTimes).Seconds()) / float64(*conf.concurrency)) + (float64(sumTime(conf.getTimes).Seconds()) / float64(*conf.concurrency)),
 		"\ntime for puts":        float64(sumTime(conf.putTimes).Seconds()) / float64(*conf.concurrency),
 		"\ntime for gets":        float64(sumTime(conf.getTimes).Seconds()) / float64(*conf.concurrency),
 		"\nput per sec":          (*conf.putPercentage * float64(*conf.amount)) / (float64(sumTime(conf.putTimes).Seconds()) / float64(*conf.concurrency)),
@@ -148,7 +146,6 @@ func (o *keyValue) createKey() {
 	o.key.Write(o.keyPre)
 	o.key.WriteByte(byte('.'))
 	countAsByte := []byte(strconv.Itoa(o.count))
-	// countArr := toByteArray(string(o.count))
 	for o.key.Len() < (o.keySize - len(countAsByte)) {
 		o.key.WriteByte(byte('0'))
 	}
@@ -159,7 +156,6 @@ func (o *keyValue) createKey() {
 }
 
 func (o *keyValue) createValue() {
-	//value changes with each put due to concurency
 	o.value.Grow(o.valueSize)
 	for o.value.Len() < o.valueSize {
 		for i := 0; i < 4; i++ {
@@ -345,7 +341,6 @@ func (conf *config) execute(c int, ran []uint32, wg *sync.WaitGroup) {
 
 func (conf *config) executeOp(kv keyValue) {
 	timer := time.Now()
-	//do operation
 	switch kv.opType {
 	case 0:
 		conf.lkvtPut(kv)
