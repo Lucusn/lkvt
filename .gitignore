@@ -1,2 +1,2 @@
-#ignore the etcd-custom-client
-etcd-custom-client
+#ignore the lkvt
+lvkt
