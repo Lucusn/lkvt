@@ -8,6 +8,7 @@ import (
 	"hash/crc32"
 	"math/rand"
 	"os"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -31,7 +32,7 @@ type keyValue struct {
 	crcCheck  bool
 	client    clientv3.Client
 	footer    kvFooter
-	count     uint32
+	count     int
 	opType    int
 }
 
@@ -67,7 +68,6 @@ func (conf *config) setUp() {
 	conf.lastCon = *conf.concurrency - 1
 	endpts := strings.Split(*conf.endpoints, ",")
 
-	//this should cycle for each endpnt and there should be an arr of ports and addr
 	addrandport := strings.Split(endpts[0], "/")
 	addrport := strings.Split(addrandport[2], ":")
 	conf.addr = addrport[0]
@@ -146,15 +146,16 @@ func (o *keyValue) createKV() {
 
 func (o *keyValue) createKey() {
 	o.key.Write(o.keyPre)
-	// convert o.count to string for byte array
-	countArr := toByteArray(o.count)
 	o.key.WriteByte(byte('.'))
-	for o.key.Len() < o.keySize {
-		for i := 0; i < 4; i++ {
-			o.key.WriteByte(countArr[i])
-		}
+	countAsByte := []byte(strconv.Itoa(o.count))
+	// countArr := toByteArray(string(o.count))
+	for o.key.Len() < (o.keySize - len(countAsByte)) {
+		o.key.WriteByte(byte('0'))
 	}
-	o.key.Truncate(o.keySize)
+	o.key.Write(countAsByte)
+	if o.key.Len() != o.keySize {
+		log.Error("generated key isn't correct size. key: ", o.key.String(), " size in bytes: ", o.key.Len())
+	}
 }
 
 func (o *keyValue) createValue() {
@@ -228,7 +229,7 @@ func (o *keyValue) etcdGet() {
 			log.Error("magic check failes. ", getFooter[0], byte(175))
 		}
 	} else {
-		log.Error("get was empty:", getVal)
+		log.Error("attempted get with key: ", o.key.String(), " get returned empty: ", getVal)
 	}
 
 }
@@ -258,7 +259,7 @@ func (o *keyValue) niovaGet(addr string, port string) {
 			log.Fatal("magic check failes. ", getFooter[0], byte(175))
 		}
 	} else {
-		log.Error("get was empty:", getVal)
+		log.Error("attempted get with key: ", o.key.String(), " get returned empty: ", getVal)
 	}
 
 }
@@ -329,7 +330,7 @@ func (conf *config) execute(c int, ran []uint32, wg *sync.WaitGroup) {
 			valueSize: *conf.valueSize,
 			client:    conf.client,
 			randVal:   toByteArray(ran[i]),
-			count:     uint32((*conf.amount / *conf.concurrency)*c + i + 1),
+			count:     int((*conf.amount / *conf.concurrency)*c + i + 1),
 		}
 		if float64(kv.count) <= float64(*conf.amount)*(*conf.putPercentage) {
 			kv.opType = 0
