@@ -1,10 +1,18 @@
-module lucusn.io/etcd-custom-client
-
-go 1.16
+module lucusn.io/lkvt
 
 replace github.com/coreos/bbolt v1.3.4 => go.etcd.io/bbolt v1.3.4
 
 replace go.etcd.io/bbolt v1.3.4 => github.com/coreos/bbolt v1.3.4
+
+replace niovakv/clientapi => ../
+
+replace niovakv/serfclienthandler => ../../serf/client
+
+replace niovakv/niovakvlib => ../../lib
+
+replace niovakv/httpclient => ../../http/client
+
+go 1.16
 
 require (
 	github.com/aybabtme/uniplot v0.0.0-20151203143629-039c559e5e7e // indirect
@@ -22,4 +30,6 @@ require (
 	go.etcd.io/etcd v3.3.25+incompatible
 	go.uber.org/zap v1.17.0 // indirect
 	google.golang.org/grpc v1.26.0 // indirect
+	niovakv/clientapi v0.0.0-00010101000000-000000000000 // indirect
+	niovakv/niovakvlib v0.0.0-00010101000000-000000000000 // indirect
 )
