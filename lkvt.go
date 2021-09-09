@@ -4,9 +4,11 @@ import (
 	"bytes"
 	"context"
 	"encoding/binary"
+	"encoding/json"
 	"flag"
 	"fmt"
 	"hash/crc32"
+	"io/ioutil"
 	"math/rand"
 	"os"
 	"strconv"
@@ -50,7 +52,6 @@ type config struct {
 	putPercentage    *float64
 	valueSize        *int
 	keySize          *int
-	amount           *int
 	keyPrefix        *string
 	seed             *int64
 	concurrency      *int
@@ -67,19 +68,27 @@ type config struct {
 	port             string
 	lastCon          int
 	completedRequest *int64
+
+	Amount     *int `json:"Request_count"`
+	Putcount   int  `json:"Put_count"`
+	Getcount   int  `json:"Get_count"`
+	PutSuccess int  `json:"Put_success"`
+	GetSuccess int  `json:"Get_success"`
+	PutFailure int  `json:"Put_failures"`
+	GetFailure int  `json:"Get_failures"`
 }
 
 func (conf *config) printProgress() {
 	fmt.Println(" ")
-	for atomic.LoadInt64(conf.completedRequest) != int64(*conf.amount) {
+	for atomic.LoadInt64(conf.completedRequest) != int64(*conf.Amount) {
 		fmt.Print("\033[G\033[K")
 		fmt.Print("\033[A")
-		fmt.Println(atomic.LoadInt64(conf.completedRequest), " / ", int64(*conf.amount), "request completed")
+		fmt.Println(atomic.LoadInt64(conf.completedRequest), " / ", int64(*conf.Amount), "request completed")
 		time.Sleep(1 * time.Second)
 	}
 	fmt.Print("\033[G\033[K")
 	fmt.Print("\033[A")
-	fmt.Println(atomic.LoadInt64(conf.completedRequest), " / ", int64(*conf.amount), "request completed")
+	fmt.Println(atomic.LoadInt64(conf.completedRequest), " / ", int64(*conf.Amount), "request completed")
 }
 
 func (conf *config) setUp() {
@@ -135,14 +144,14 @@ func (conf *config) exitApp() {
 	hGet := histogram.Hist(9, floatGet)
 
 	log.WithFields(log.Fields{
-		"\noperations completed": *conf.amount,
+		"\noperations completed": *conf.Amount,
 		"\nseconds to complete":  (float64(sumTime(conf.putTimes).Seconds()) / float64(*conf.concurrency)) + (float64(sumTime(conf.getTimes).Seconds()) / float64(*conf.concurrency)),
 		"\ntime for puts":        float64(sumTime(conf.putTimes).Seconds()) / float64(*conf.concurrency),
 		"\ntime for gets":        float64(sumTime(conf.getTimes).Seconds()) / float64(*conf.concurrency),
-		"\nput per sec":          (*conf.putPercentage * float64(*conf.amount)) / (float64(sumTime(conf.putTimes).Seconds()) / float64(*conf.concurrency)),
-		"\nget per sec":          (((*conf.putPercentage - 1) * -1) * float64(*conf.amount)) / (float64(sumTime(conf.getTimes).Seconds()) / float64(*conf.concurrency)),
-		"\naverage ms per put":   (float64(sumTime(conf.putTimes).Milliseconds()) / float64(*conf.amount)),
-		"\naverage ms per get":   (float64(sumTime(conf.getTimes).Milliseconds()) / float64(*conf.amount)),
+		"\nput per sec":          (*conf.putPercentage * float64(*conf.Amount)) / (float64(sumTime(conf.putTimes).Seconds()) / float64(*conf.concurrency)),
+		"\nget per sec":          (((*conf.putPercentage - 1) * -1) * float64(*conf.Amount)) / (float64(sumTime(conf.getTimes).Seconds()) / float64(*conf.concurrency)),
+		"\naverage ms per put":   (float64(sumTime(conf.putTimes).Milliseconds()) / float64(*conf.Amount)),
+		"\naverage ms per get":   (float64(sumTime(conf.getTimes).Milliseconds()) / float64(*conf.Amount)),
 	}).Info("done")
 	log.Info("ms latency for puts")
 	histogram.Fprint(os.Stdout, hPut, histogram.Linear(5))
@@ -231,7 +240,7 @@ func (o *keyValue) etcdPut() {
 	cancel()
 }
 
-func (o *keyValue) niovaPut(addr string, port string) {
+func (o *keyValue) niovaPut(addr string, port string) bool {
 	reqObj := niovakvlib.NiovaKV{
 		InputKey:   o.key.String(),
 		InputValue: o.valForPut,
@@ -245,6 +254,10 @@ func (o *keyValue) niovaPut(addr string, port string) {
 		"time of put Unix nano": o.footer.timeUnix,
 		"put status":            putStatus,
 	}).Debug("put")
+	if putStatus != 0 {
+		return false
+	}
+	return true
 }
 
 func (o *keyValue) etcdGet() {
@@ -271,7 +284,8 @@ func (o *keyValue) etcdGet() {
 
 }
 
-func (o *keyValue) niovaGet(addr string, port string) {
+func (o *keyValue) niovaGet(addr string, port string) bool {
+	status := true
 	reqObj := niovakvlib.NiovaKV{
 		InputKey: o.key.String(),
 	}
@@ -285,16 +299,18 @@ func (o *keyValue) niovaGet(addr string, port string) {
 	}).Debug("get")
 	if len(getVal) > 0 {
 		getFooter := getFooter(getVal)
-		magCheck := o.magicChecker(getFooter)
-		if magCheck {
+		status = o.magicChecker(getFooter)
+		if status {
 			o.crcChecker(getVal, getFooter)
+			status = o.crcCheck
 		} else {
-			log.Fatal("magic check failes. ", getFooter[0], byte(175))
+			log.Error("magic check failes. ", getFooter[0], byte(175))
 		}
 	} else {
 		log.Error("attempted get with key: ", o.key.String(), " get returned empty: ", getVal)
+		status = false
 	}
-
+	return status
 }
 
 func getFooter(getVal []byte) [13]byte {
@@ -340,7 +356,7 @@ func (o *keyValue) crcChecker(value []byte, getFooter [13]byte) {
 		o.crcCheck = true
 	}
 	if !o.crcCheck {
-		log.Fatal("the crc check was ", o.crcCheck, getCrc, checkArr)
+		log.Error("the crc check was ", o.crcCheck, getCrc, checkArr)
 	}
 }
 
@@ -364,10 +380,10 @@ func (conf *config) execute(c int, ran []uint32, wg *sync.WaitGroup) {
 			etcdClient: conf.etcdClient,
 			nkvcClient: &conf.nkvcClient,
 			randVal:    toByteArray(ran[i]),
-			count:      int((*conf.amount / *conf.concurrency)*c + i + 1),
+			count:      int((*conf.Amount / *conf.concurrency)*c + i + 1),
 		}
 
-		if float64(kv.count) <= float64(*conf.amount)*(*conf.putPercentage) {
+		if float64(kv.count) <= float64(*conf.Amount)*(*conf.putPercentage) {
 			kv.opType = 0
 		} else {
 			kv.opType = 1
@@ -396,7 +412,13 @@ func (conf *config) executeOp(kv keyValue) {
 func (conf *config) lkvtPut(kv keyValue) {
 	switch *conf.database {
 	case 0:
-		kv.niovaPut(conf.addr, conf.port)
+		conf.Putcount += 1
+		status := kv.niovaPut(conf.addr, conf.port)
+		if status {
+			conf.PutSuccess += 1
+		} else {
+			conf.PutFailure += 1
+		}
 	case 1:
 		kv.etcdPut()
 	}
@@ -405,7 +427,13 @@ func (conf *config) lkvtPut(kv keyValue) {
 func (conf *config) lkvtGet(kv keyValue) {
 	switch *conf.database {
 	case 0:
-		kv.niovaGet(conf.addr, conf.port)
+		conf.Getcount += 1
+		status := kv.niovaGet(conf.addr, conf.port)
+		if status {
+			conf.GetSuccess += 1
+		} else {
+			conf.GetFailure += 1
+		}
 	case 1:
 		kv.etcdGet()
 	}
@@ -421,9 +449,9 @@ func (conf *config) randSetUp(c int, rSeed *rand.Rand) []uint32 {
 }
 
 func (conf *config) setn(c int) int {
-	n := (*conf.amount / *conf.concurrency)
+	n := (*conf.Amount / *conf.concurrency)
 	if c == conf.lastCon {
-		n = (*conf.amount / *conf.concurrency) + (*conf.amount % *conf.concurrency)
+		n = (*conf.Amount / *conf.concurrency) + (*conf.Amount % *conf.concurrency)
 	}
 	return n
 }
@@ -434,7 +462,7 @@ func main() {
 		putPercentage: flag.Float64("pp", 0.50, "percentage of puts versus gets. 0.50 means 50% put 50% get"),
 		valueSize:     flag.Int("vs", 0, "size of the value in bytes. min:16 bytes. ‘0’ means that the size is random"),
 		keySize:       flag.Int("ks", 0, "size of the key in bytes. min:1 byte. ‘0’ means that the size is random"),
-		amount:        flag.Int("n", 1, "number of operations"),
+		Amount:        flag.Int("n", 1, "number of operations"),
 		keyPrefix:     flag.String("kp", "key", "specify a key prefix"),
 		seed:          flag.Int64("s", time.Now().UnixNano(), "seed to the random number generator"),
 		concurrency:   flag.Int("c", 1, "The number of concurrent requests which may be outstanding at any one time"),
@@ -448,4 +476,7 @@ func main() {
 		time.Sleep(1000)
 	}
 	conf.exitApp()
+	file, err := json.MarshalIndent(conf, "", " ")
+	fmt.Println(err)
+	_ = ioutil.WriteFile("lkvtData.json", file, 0644)
 }
