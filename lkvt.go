@@ -5,12 +5,14 @@ import (
 	"context"
 	"encoding/binary"
 	"flag"
+	"fmt"
 	"hash/crc32"
 	"math/rand"
 	"os"
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"niovakv/clientapi"
@@ -22,18 +24,19 @@ import (
 )
 
 type keyValue struct {
-	key       bytes.Buffer
-	value     bytes.Buffer
-	valForPut []byte
-	keySize   int
-	keyPre    []byte
-	valueSize int
-	randVal   [4]byte
-	crcCheck  bool
-	client    clientv3.Client
-	footer    kvFooter
-	count     int
-	opType    int
+	key        bytes.Buffer
+	value      bytes.Buffer
+	valForPut  []byte
+	keySize    int
+	keyPre     []byte
+	valueSize  int
+	randVal    [4]byte
+	crcCheck   bool
+	etcdClient *clientv3.Client
+	nkvcClient *clientapi.NiovakvClient
+	footer     kvFooter
+	count      int
+	opType     int
 }
 
 type kvFooter struct {
@@ -44,23 +47,39 @@ type kvFooter struct {
 }
 
 type config struct {
-	putPercentage *float64
-	valueSize     *int
-	keySize       *int
-	amount        *int
-	keyPrefix     *string
-	seed          *int64
-	concurrency   *int
-	endpoints     *string
-	database      *int
-	rSeed         *rand.Rand
-	client        clientv3.Client
-	putTimes      []time.Duration
-	getTimes      []time.Duration
-	wg            sync.WaitGroup
-	addr          string
-	port          string
-	lastCon       int
+	putPercentage    *float64
+	valueSize        *int
+	keySize          *int
+	amount           *int
+	keyPrefix        *string
+	seed             *int64
+	concurrency      *int
+	endpoints        *string
+	database         *int
+	rSeed            *rand.Rand
+	etcdClient       *clientv3.Client
+	nkvcClient       clientapi.NiovakvClient
+	nkvcStop         chan int
+	putTimes         []time.Duration
+	getTimes         []time.Duration
+	wg               sync.WaitGroup
+	addr             string
+	port             string
+	lastCon          int
+	completedRequest *int64
+}
+
+func (conf *config) printProgress() {
+	fmt.Println(" ")
+	for atomic.LoadInt64(conf.completedRequest) != int64(*conf.amount) {
+		fmt.Print("\033[G\033[K")
+		fmt.Print("\033[A")
+		fmt.Println(atomic.LoadInt64(conf.completedRequest), " / ", int64(*conf.amount), "request completed")
+		time.Sleep(1 * time.Second)
+	}
+	fmt.Print("\033[G\033[K")
+	fmt.Print("\033[A")
+	fmt.Println(atomic.LoadInt64(conf.completedRequest), " / ", int64(*conf.amount), "request completed")
 }
 
 func (conf *config) setUp() {
@@ -88,18 +107,22 @@ func (conf *config) setUp() {
 	} else if *conf.valueSize < 16 {
 		*conf.valueSize = 16
 	}
+	var count int64
+	count = 0
+	conf.completedRequest = &count
 
 	conf.wg.Add(*conf.concurrency)
-	var err error
-	conf.client, err = createclient(endpts)
-	if err != nil {
-		log.Fatal("could not make connection", err)
-	}
+	// var err error
+	conf.createclient(endpts)
+	// if err != nil {
+	// 	log.Fatal("could not make connection", err)
+	// }
 }
 
 func (conf *config) exitApp() {
+	go conf.printProgress()
 	conf.wg.Wait()
-	conf.client.Close()
+	conf.stopClient()
 	var floatPut = make([]float64, len(conf.putTimes))
 	for i := 0; i < len(floatPut); i++ {
 		floatPut[i] = float64(conf.putTimes[i].Milliseconds())
@@ -125,6 +148,15 @@ func (conf *config) exitApp() {
 	histogram.Fprint(os.Stdout, hPut, histogram.Linear(5))
 	log.Info("ms latency for gets")
 	histogram.Fprint(os.Stdout, hGet, histogram.Linear(5))
+}
+
+func (conf *config) stopClient() {
+	switch *conf.database {
+	case 0:
+		conf.nkvcStop <- 1
+	case 1:
+		conf.etcdClient.Close()
+	}
 }
 
 func sumTime(array []time.Duration) time.Duration {
@@ -167,20 +199,33 @@ func (o *keyValue) createValue() {
 	o.applyFooter()
 }
 
-func createclient(endpoint []string) (clientv3.Client, error) {
-	cli, err := clientv3.New(clientv3.Config{
-		Endpoints:   endpoint,
-		DialTimeout: 5 * time.Second,
-	})
-	return *cli, err
+func (conf *config) createclient(endpoint []string) {
+	var err error
+
+	switch *conf.database {
+	case 0:
+		conf.nkvcStop = make(chan int)
+		conf.nkvcClient.Timeout = 10 * time.Second
+		go conf.nkvcClient.Start(conf.nkvcStop, "../config")
+		time.Sleep(5 * time.Second)
+	case 1:
+		conf.etcdClient, err = clientv3.New(clientv3.Config{
+			Endpoints:   endpoint,
+			DialTimeout: 5 * time.Second,
+		})
+	}
+
+	if err != nil {
+		log.Fatal("could not make connection", err)
+	}
 }
 
 func (o *keyValue) etcdPut() {
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-	o.client.Put(ctx, o.key.String(), string(o.valForPut))
+	o.etcdClient.Put(ctx, o.key.String(), string(o.valForPut))
 	log.WithFields(log.Fields{
 		"kv.key":                o.key,
-		"put value":             string(o.valForPut),
+		"put value":             o.valForPut,
 		"time of put Unix nano": o.footer.timeUnix,
 	}).Debug("put")
 	cancel()
@@ -191,16 +236,12 @@ func (o *keyValue) niovaPut(addr string, port string) {
 		InputKey:   o.key.String(),
 		InputValue: o.valForPut,
 	}
-	nkvc := clientapi.NiovakvClient{
-		ReqObj: &reqObj,
-		Addr:   addr,
-		Port:   port,
-	}
+	//o.nkvcClient.ReqObj = &reqObj
 
-	putStatus := nkvc.Put()
+	putStatus := o.nkvcClient.Put(&reqObj)
 	log.WithFields(log.Fields{
 		"kv.key":                o.key,
-		"put value":             string(o.valForPut),
+		"put value":             o.valForPut,
 		"time of put Unix nano": o.footer.timeUnix,
 		"put status":            putStatus,
 	}).Debug("put")
@@ -208,7 +249,7 @@ func (o *keyValue) niovaPut(addr string, port string) {
 
 func (o *keyValue) etcdGet() {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	gr, _ := o.client.Get(ctx, o.key.String())
+	gr, _ := o.etcdClient.Get(ctx, o.key.String())
 	cancel()
 	getVal := gr.Kvs[0].Value
 	log.WithFields(log.Fields{
@@ -234,13 +275,9 @@ func (o *keyValue) niovaGet(addr string, port string) {
 	reqObj := niovakvlib.NiovaKV{
 		InputKey: o.key.String(),
 	}
-	nkvc := clientapi.NiovakvClient{
-		ReqObj: &reqObj,
-		Addr:   addr,
-		Port:   port,
-	}
-	nkvc.ReqObj.InputKey = o.key.String()
-	getVal := nkvc.Get()
+	//o.nkvcClient.ReqObj = &reqObj
+
+	getVal := o.nkvcClient.Get(&reqObj)
 	log.WithFields(log.Fields{
 		"get key":               o.key.String(),
 		"get value":             getVal,
@@ -321,13 +358,15 @@ func (conf *config) execute(c int, ran []uint32, wg *sync.WaitGroup) {
 	n := conf.setn(c)
 	for i := 0; i < (n); i++ {
 		kv := keyValue{
-			keySize:   *conf.keySize,
-			keyPre:    []byte(*conf.keyPrefix),
-			valueSize: *conf.valueSize,
-			client:    conf.client,
-			randVal:   toByteArray(ran[i]),
-			count:     int((*conf.amount / *conf.concurrency)*c + i + 1),
+			keySize:    *conf.keySize,
+			keyPre:     []byte(*conf.keyPrefix),
+			valueSize:  *conf.valueSize,
+			etcdClient: conf.etcdClient,
+			nkvcClient: &conf.nkvcClient,
+			randVal:    toByteArray(ran[i]),
+			count:      int((*conf.amount / *conf.concurrency)*c + i + 1),
 		}
+
 		if float64(kv.count) <= float64(*conf.amount)*(*conf.putPercentage) {
 			kv.opType = 0
 		} else {
@@ -335,6 +374,7 @@ func (conf *config) execute(c int, ran []uint32, wg *sync.WaitGroup) {
 		}
 		kv.createKV()
 		conf.executeOp(kv)
+		atomic.AddInt64(conf.completedRequest, int64(1))
 	}
 	defer wg.Done()
 }
