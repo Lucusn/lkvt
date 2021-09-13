@@ -471,7 +471,7 @@ func main() {
 		endpoints:     flag.String("ep", "http://127.0.0.100:2380,http://127.0.0.101:2380,http://127.0.0.102:2380,http://127.0.0.103:2380,http://127.0.0.104:2380", "endpoints seperated by comas ex.http://127.0.0.100:2380,http://127.0.0.101:2380"),
 		database:      flag.Int("d", 0, "the database you would like to use (0 = pmdb 1 = etcd)"),
 		configPath:    flag.String("cp", "../config", "Path to niova config file"),
-		jsonPath:      flag.String("jp", "execution-summary.json", "Path to execution summary json file"),
+		jsonPath:      flag.String("jp", "execution-summary", "Path to execution summary json file"),
 	}
 	conf.setUp()
 	for c := 0; c < *conf.concurrency; c++ {
@@ -481,5 +481,5 @@ func main() {
 	}
 	conf.exitApp()
 	file, _ := json.MarshalIndent(conf, "", " ")
-	_ = ioutil.WriteFile(*conf.jsonPath, file, 0644)
+	_ = ioutil.WriteFile(*conf.jsonPath+".json", file, 0644)
 }
