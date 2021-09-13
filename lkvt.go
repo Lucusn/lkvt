@@ -68,6 +68,8 @@ type config struct {
 	port             string
 	lastCon          int
 	completedRequest *int64
+	readWait         sync.WaitGroup
+	configPath       string
 
 	Amount     *int `json:"Request_count"`
 	Putcount   int  `json:"Put_count"`
@@ -116,8 +118,7 @@ func (conf *config) setUp() {
 	} else if *conf.valueSize < 16 {
 		*conf.valueSize = 16
 	}
-	var count int64
-	count = 0
+	count := int64(0)
 	conf.completedRequest = &count
 
 	conf.wg.Add(*conf.concurrency)
@@ -215,7 +216,7 @@ func (conf *config) createclient(endpoint []string) {
 	case 0:
 		conf.nkvcStop = make(chan int)
 		conf.nkvcClient.Timeout = 10 * time.Second
-		go conf.nkvcClient.Start(conf.nkvcStop, "../config")
+		go conf.nkvcClient.Start(conf.nkvcStop, conf.configPath)
 		time.Sleep(5 * time.Second)
 	case 1:
 		conf.etcdClient, err = clientv3.New(clientv3.Config{
@@ -468,6 +469,7 @@ func main() {
 		concurrency:   flag.Int("c", 1, "The number of concurrent requests which may be outstanding at any one time"),
 		endpoints:     flag.String("ep", "http://127.0.0.100:2380,http://127.0.0.101:2380,http://127.0.0.102:2380,http://127.0.0.103:2380,http://127.0.0.104:2380", "endpoints seperated by comas ex.http://127.0.0.100:2380,http://127.0.0.101:2380"),
 		database:      flag.Int("d", 0, "the database you would like to use (0 = pmdb 1 = etcd)"),
+		configPath:    flag.String("cp", "../config", "Path to niova config file"),
 	}
 	conf.setUp()
 	for c := 0; c < *conf.concurrency; c++ {
