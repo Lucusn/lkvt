@@ -69,7 +69,8 @@ type config struct {
 	lastCon          int
 	completedRequest *int64
 	readWait         sync.WaitGroup
-	configPath       string
+	configPath       *string
+	jsonPath         *string
 
 	Amount     *int `json:"Request_count"`
 	Putcount   int  `json:"Put_count"`
@@ -216,7 +217,7 @@ func (conf *config) createclient(endpoint []string) {
 	case 0:
 		conf.nkvcStop = make(chan int)
 		conf.nkvcClient.Timeout = 10 * time.Second
-		go conf.nkvcClient.Start(conf.nkvcStop, conf.configPath)
+		go conf.nkvcClient.Start(conf.nkvcStop, *conf.configPath)
 		time.Sleep(5 * time.Second)
 	case 1:
 		conf.etcdClient, err = clientv3.New(clientv3.Config{
@@ -470,6 +471,7 @@ func main() {
 		endpoints:     flag.String("ep", "http://127.0.0.100:2380,http://127.0.0.101:2380,http://127.0.0.102:2380,http://127.0.0.103:2380,http://127.0.0.104:2380", "endpoints seperated by comas ex.http://127.0.0.100:2380,http://127.0.0.101:2380"),
 		database:      flag.Int("d", 0, "the database you would like to use (0 = pmdb 1 = etcd)"),
 		configPath:    flag.String("cp", "../config", "Path to niova config file"),
+		jsonPath:      flag.String("jp", "execution-summary.json", "Path to execution summary json file"),
 	}
 	conf.setUp()
 	for c := 0; c < *conf.concurrency; c++ {
@@ -478,7 +480,6 @@ func main() {
 		time.Sleep(1000)
 	}
 	conf.exitApp()
-	file, err := json.MarshalIndent(conf, "", " ")
-	fmt.Println(err)
-	_ = ioutil.WriteFile("lkvtData.json", file, 0644)
+	file, _ := json.MarshalIndent(conf, "", " ")
+	_ = ioutil.WriteFile(*conf.jsonPath, file, 0644)
 }
