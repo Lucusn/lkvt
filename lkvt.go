@@ -68,7 +68,6 @@ type config struct {
 	port             string
 	lastCon          int
 	completedRequest *int64
-	readWait         sync.WaitGroup
 	configPath       *string
 	jsonPath         *string
 
@@ -249,7 +248,7 @@ func (o *keyValue) niovaPut(addr string, port string) bool {
 	}
 	//o.nkvcClient.ReqObj = &reqObj
 
-	putStatus := o.nkvcClient.Put(&reqObj)
+	putStatus, _ := o.nkvcClient.Put(&reqObj)
 	log.WithFields(log.Fields{
 		"kv.key":                o.key,
 		"put value":             o.valForPut,
@@ -293,7 +292,7 @@ func (o *keyValue) niovaGet(addr string, port string) bool {
 	}
 	//o.nkvcClient.ReqObj = &reqObj
 
-	getVal := o.nkvcClient.Get(&reqObj)
+	_, getVal := o.nkvcClient.Get(&reqObj)
 	log.WithFields(log.Fields{
 		"get key":               o.key.String(),
 		"get value":             getVal,
