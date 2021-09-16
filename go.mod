@@ -4,13 +4,13 @@ replace github.com/coreos/bbolt v1.3.4 => go.etcd.io/bbolt v1.3.4
 
 replace go.etcd.io/bbolt v1.3.4 => github.com/coreos/bbolt v1.3.4
 
-replace niovakv/clientapi => ../
+replace niovakv/clientapi => ../niovakv_client_api
 
-replace niovakv/serfclienthandler => ../../serf/client
+replace niovakv/serfclienthandler => ../serf/client
 
-replace niovakv/niovakvlib => ../../lib
+replace niovakv/niovakvlib => ../lib
 
-replace niovakv/httpclient => ../../http/client
+replace niovakv/httpclient => ../http/client
 
 go 1.16
 
