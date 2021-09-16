@@ -35,7 +35,7 @@ type keyValue struct {
 	randVal    [4]byte
 	crcCheck   bool
 	etcdClient *clientv3.Client
-	nkvcClient *clientapi.NiovakvClient
+	nkvcClient *clientapi.ClientAPI
 	footer     kvFooter
 	count      int
 	opType     int
@@ -59,7 +59,7 @@ type config struct {
 	database         *int
 	rSeed            *rand.Rand
 	etcdClient       *clientv3.Client
-	nkvcClient       clientapi.NiovakvClient
+	nkvcClient       clientapi.ClientAPI
 	nkvcStop         chan int
 	putTimes         []time.Duration
 	getTimes         []time.Duration
@@ -469,7 +469,7 @@ func main() {
 		concurrency:   flag.Int("c", 1, "The number of concurrent requests which may be outstanding at any one time"),
 		endpoints:     flag.String("ep", "http://127.0.0.100:2380,http://127.0.0.101:2380,http://127.0.0.102:2380,http://127.0.0.103:2380,http://127.0.0.104:2380", "endpoints seperated by comas ex.http://127.0.0.100:2380,http://127.0.0.101:2380"),
 		database:      flag.Int("d", 0, "the database you would like to use (0 = pmdb 1 = etcd)"),
-		configPath:    flag.String("cp", "../config", "Path to niova config file"),
+		configPath:    flag.String("cp", "./config", "Path to niova config file"),
 		jsonPath:      flag.String("jp", "execution-summary", "Path to execution summary json file"),
 	}
 	conf.setUp()
