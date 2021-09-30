@@ -67,30 +67,30 @@ type config struct {
 	addr             string
 	port             string
 	lastCon          int
-	completedRequest *int64
+	completedRequest int64
 	configPath       *string
 	jsonPath         *string
 
-	Amount     *int `json:"Request_count"`
-	Putcount   int  `json:"Put_count"`
-	Getcount   int  `json:"Get_count"`
-	PutSuccess int  `json:"Put_success"`
-	GetSuccess int  `json:"Get_success"`
-	PutFailure int  `json:"Put_failures"`
-	GetFailure int  `json:"Get_failures"`
+	Amount     *int    `json:"Request_count"`
+	Putcount   int64  `json:"Put_count"`
+	Getcount   int64  `json:"Get_count"`
+	PutSuccess int64  `json:"Put_success"`
+	GetSuccess int64  `json:"Get_success"`
+	PutFailure int64  `json:"Put_failures"`
+	GetFailure int64  `json:"Get_failures"`
 }
 
 func (conf *config) printProgress() {
 	fmt.Println(" ")
-	for atomic.LoadInt64(conf.completedRequest) != int64(*conf.Amount) {
+	for atomic.LoadInt64(&conf.completedRequest) != int64(*conf.Amount) {
 		fmt.Print("\033[G\033[K")
 		fmt.Print("\033[A")
-		fmt.Println(atomic.LoadInt64(conf.completedRequest), " / ", int64(*conf.Amount), "request completed")
+		fmt.Println(atomic.LoadInt64(&conf.completedRequest), " / ", int64(*conf.Amount), "request completed")
 		time.Sleep(1 * time.Second)
 	}
 	fmt.Print("\033[G\033[K")
 	fmt.Print("\033[A")
-	fmt.Println(atomic.LoadInt64(conf.completedRequest), " / ", int64(*conf.Amount), "request completed")
+	fmt.Println(atomic.LoadInt64(&conf.completedRequest), " / ", int64(*conf.Amount), "request completed")
 }
 
 func (conf *config) setUp() {
@@ -118,9 +118,6 @@ func (conf *config) setUp() {
 	} else if *conf.valueSize < 16 {
 		*conf.valueSize = 16
 	}
-	count := int64(0)
-	conf.completedRequest = &count
-
 	conf.wg.Add(*conf.concurrency)
 	// var err error
 	conf.createclient(endpts)
@@ -391,7 +388,7 @@ func (conf *config) execute(c int, ran []uint32, wg *sync.WaitGroup) {
 		}
 		kv.createKV()
 		conf.executeOp(kv)
-		atomic.AddInt64(conf.completedRequest, int64(1))
+		atomic.AddInt64(&conf.completedRequest, int64(1))
 	}
 	defer wg.Done()
 }
@@ -413,12 +410,12 @@ func (conf *config) executeOp(kv keyValue) {
 func (conf *config) lkvtPut(kv keyValue) {
 	switch *conf.database {
 	case 0:
-		conf.Putcount += 1
+		atomic.AddInt64(&conf.Putcount,int64(1))
 		status := kv.niovaPut(conf.addr, conf.port)
 		if status {
-			conf.PutSuccess += 1
+			atomic.AddInt64(&conf.PutSuccess,int64(1))
 		} else {
-			conf.PutFailure += 1
+			atomic.AddInt64(&conf.PutFailure,int64(1))
 		}
 	case 1:
 		kv.etcdPut()
@@ -428,13 +425,13 @@ func (conf *config) lkvtPut(kv keyValue) {
 func (conf *config) lkvtGet(kv keyValue) {
 	switch *conf.database {
 	case 0:
-		conf.Getcount += 1
+		atomic.AddInt64(&conf.Getcount,int64(1))
 		status := kv.niovaGet(conf.addr, conf.port)
 		if status {
-			conf.GetSuccess += 1
-		} else {
-			conf.GetFailure += 1
-		}
+                        atomic.AddInt64(&conf.GetSuccess,int64(1))
+                } else {
+                        atomic.AddInt64(&conf.GetFailure,int64(1))
+                }
 	case 1:
 		kv.etcdGet()
 	}
