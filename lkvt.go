@@ -59,7 +59,7 @@ type config struct {
 	database         *int
 	rSeed            *rand.Rand
 	etcdClient       *clientv3.Client
-	nkvcClient       clientapi.ClientAPI
+	NkvcClient       clientapi.ClientAPI
 	nkvcStop         chan int
 	putTimes         []time.Duration
 	getTimes         []time.Duration
@@ -70,6 +70,8 @@ type config struct {
 	completedRequest int64
 	configPath       *string
 	jsonPath         *string
+	chooseAlgo       *int
+        specificServer	 *string
 
 	Amount     *int    `json:"Request_count"`
 	Putcount   int64  `json:"Put_count"`
@@ -212,8 +214,11 @@ func (conf *config) createclient(endpoint []string) {
 	switch *conf.database {
 	case 0:
 		conf.nkvcStop = make(chan int)
-		conf.nkvcClient.Timeout = 10 * time.Second
-		go conf.nkvcClient.Start(conf.nkvcStop, *conf.configPath)
+		conf.NkvcClient.Timeout = 10 * time.Second
+		conf.NkvcClient.ServerChooseAlgorithm = *conf.chooseAlgo
+		conf.NkvcClient.UseSpecificServerName = *conf.specificServer
+		conf.NkvcClient.IsStatRequired = true
+		go conf.NkvcClient.Start(conf.nkvcStop, *conf.configPath)
 		time.Sleep(5 * time.Second)
 	case 1:
 		conf.etcdClient, err = clientv3.New(clientv3.Config{
@@ -376,7 +381,7 @@ func (conf *config) execute(c int, ran []uint32, wg *sync.WaitGroup) {
 			keyPre:     []byte(*conf.keyPrefix),
 			valueSize:  *conf.valueSize,
 			etcdClient: conf.etcdClient,
-			nkvcClient: &conf.nkvcClient,
+			nkvcClient: &conf.NkvcClient,
 			randVal:    toByteArray(ran[i]),
 			count:      int((*conf.Amount / *conf.concurrency)*c + i + 1),
 		}
@@ -468,6 +473,8 @@ func main() {
 		database:      flag.Int("d", 0, "the database you would like to use (0 = pmdb 1 = etcd)"),
 		configPath:    flag.String("cp", "./config", "Path to niova config file"),
 		jsonPath:      flag.String("jp", "execution-summary", "Path to execution summary json file"),
+		chooseAlgo:    flag.Int("ca", 0, "Algorithm for choosing niovakv_server [0-Random , 1-Round robin, 2-specific]"),
+		specificServer:flag.String("ss", "-1", "Specific server name to choose in case if -ca set to 2"),
 	}
 	conf.setUp()
 	for c := 0; c < *conf.concurrency; c++ {
