@@ -64,6 +64,7 @@ type config struct {
 	putTimes         []time.Duration
 	getTimes         []time.Duration
 	wg               sync.WaitGroup
+	writeWG		 sync.WaitGroup
 	addr             string
 	port             string
 	lastCon          int
@@ -123,6 +124,7 @@ func (conf *config) setUp() {
 	conf.wg.Add(*conf.concurrency)
 	// var err error
 	conf.createclient(endpts)
+	conf.writeWG.Add(int(float64(*conf.Amount)*(*conf.putPercentage)))
 	// if err != nil {
 	// 	log.Fatal("could not make connection", err)
 	// }
@@ -292,7 +294,6 @@ func (o *keyValue) niovaGet(addr string, port string) bool {
 	reqObj := niovakvlib.NiovaKV{
 		InputKey: o.key.String(),
 	}
-	//o.nkvcClient.ReqObj = &reqObj
 
 	_, getVal := o.nkvcClient.Get(&reqObj)
 	log.WithFields(log.Fields{
@@ -390,9 +391,13 @@ func (conf *config) execute(c int, ran []uint32, wg *sync.WaitGroup) {
 			kv.opType = 0
 		} else {
 			kv.opType = 1
+			conf.writeWG.Wait()
 		}
 		kv.createKV()
 		conf.executeOp(kv)
+		if kv.opType == 0 {
+			conf.writeWG.Done()
+		}
 		atomic.AddInt64(&conf.completedRequest, int64(1))
 	}
 	defer wg.Done()
