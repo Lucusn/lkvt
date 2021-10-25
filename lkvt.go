@@ -64,7 +64,6 @@ type config struct {
 	putTimes         []time.Duration
 	getTimes         []time.Duration
 	wg               sync.WaitGroup
-	writeWG		 sync.WaitGroup
 	addr             string
 	port             string
 	lastCon          int
@@ -81,6 +80,7 @@ type config struct {
 	GetSuccess int64  `json:"Get_success"`
 	PutFailure int64  `json:"Put_failures"`
 	GetFailure int64  `json:"Get_failures"`
+	CheckMap   map[string]int
 }
 
 func (conf *config) printProgress() {
@@ -122,17 +122,17 @@ func (conf *config) setUp() {
 		*conf.valueSize = 16
 	}
 	conf.wg.Add(*conf.concurrency)
-	// var err error
 	conf.createclient(endpts)
-	conf.writeWG.Add(int(float64(*conf.Amount)*(*conf.putPercentage)))
-	// if err != nil {
-	// 	log.Fatal("could not make connection", err)
-	// }
+	conf.CheckMap = make(map[string]int)
 }
 
-func (conf *config) exitApp() {
+func (conf *config) exitApp(skip bool) {
 	go conf.printProgress()
 	conf.wg.Wait()
+	//To avoid executing the stat inbetween
+	if skip{
+		return
+	}
 	conf.stopClient()
 	var floatPut = make([]float64, len(conf.putTimes))
 	for i := 0; i < len(floatPut); i++ {
@@ -301,6 +301,7 @@ func (o *keyValue) niovaGet(addr string, port string) bool {
 		"get value":             getVal,
 		"time of get Unix nano": o.footer.timeUnix,
 	}).Debug("get")
+	o.valForPut = getVal
 	if len(getVal) > 0 {
 		getFooter := getFooter(getVal)
 		status = o.magicChecker(getFooter)
@@ -308,6 +309,7 @@ func (o *keyValue) niovaGet(addr string, port string) bool {
 			o.crcChecker(getVal, getFooter)
 			status = o.crcCheck
 		} else {
+			log.Info(o.key.String(), ":" ,string(getVal))
 			log.Error("magic check failes. ", getFooter[0], byte(175))
 		}
 	} else {
@@ -391,13 +393,9 @@ func (conf *config) execute(c int, ran []uint32, wg *sync.WaitGroup) {
 			kv.opType = 0
 		} else {
 			kv.opType = 1
-			conf.writeWG.Wait()
 		}
 		kv.createKV()
 		conf.executeOp(kv)
-		if kv.opType == 0 {
-			conf.writeWG.Done()
-		}
 		atomic.AddInt64(&conf.completedRequest, int64(1))
 	}
 	defer wg.Done()
@@ -415,6 +413,7 @@ func (conf *config) executeOp(kv keyValue) {
 		stopGetTime := time.Since(timer)
 		conf.getTimes = append(conf.getTimes, stopGetTime)
 	}
+	conf.CheckMap[kv.key.String()] += 1
 }
 
 func (conf *config) lkvtPut(kv keyValue) {
@@ -464,10 +463,35 @@ func (conf *config) setn(c int) int {
 	return n
 }
 
+func (conf *config) write_read() {
+	var ran []uint32
+
+	//Do writes
+	*conf.putPercentage = float64(1)
+	for c := 0; c < *conf.concurrency; c++ {
+		ran = conf.randSetUp(c, conf.rSeed)
+		go conf.execute(c, ran, &conf.wg)
+		time.Sleep(1000)
+	}
+
+	//Wait for writes to complete and reset the wait group and complete ounter
+	conf.exitApp(true)
+	conf.wg.Add(*conf.concurrency)
+	conf.completedRequest = 0
+
+	//Do reads
+	*conf.putPercentage = float64(0)
+        for c := 0; c < *conf.concurrency; c++ {
+		go conf.execute(c, ran, &conf.wg)
+                time.Sleep(1000)
+        }
+
+}
+
 func main() {
 	log.Info("starting the app...")
 	conf := config{
-		putPercentage: flag.Float64("pp", 0.50, "percentage of puts versus gets. 0.50 means 50% put 50% get"),
+		putPercentage: flag.Float64("pp", -1, "percentage of puts versus gets. 0.50 means 50% put 50% get"),
 		valueSize:     flag.Int("vs", 0, "size of the value in bytes. min:16 bytes. ‘0’ means that the size is random"),
 		keySize:       flag.Int("ks", 0, "size of the key in bytes. min:1 byte. ‘0’ means that the size is random"),
 		Amount:        flag.Int("n", 1, "number of operations"),
@@ -482,12 +506,20 @@ func main() {
 		specificServer:flag.String("ss", "-1", "Specific server name to choose in case if -ca set to 2"),
 	}
 	conf.setUp()
-	for c := 0; c < *conf.concurrency; c++ {
-		ran := conf.randSetUp(c, conf.rSeed)
-		go conf.execute(c, ran, &conf.wg)
-		time.Sleep(1000)
+
+	if *conf.putPercentage != float64(-1) {
+
+		for c := 0; c < *conf.concurrency; c++ {
+			ran := conf.randSetUp(c, conf.rSeed)
+			go conf.execute(c, ran, &conf.wg)
+			time.Sleep(1000)
+		}
+
+	} else {
+		conf.write_read()
 	}
-	conf.exitApp()
+
+	conf.exitApp(false)
 	file, _ := json.MarshalIndent(conf, "", " ")
 	_ = ioutil.WriteFile(*conf.jsonPath+".json", file, 0644)
 }
