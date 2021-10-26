@@ -303,6 +303,9 @@ func (o *keyValue) niovaGet(addr string, port string) bool {
 	}).Debug("get")
 	o.valForPut = getVal
 	if len(getVal) > 0 {
+		if string(getVal) == "Key not found" {
+			return false
+		}
 		getFooter := getFooter(getVal)
 		status = o.magicChecker(getFooter)
 		if status {
