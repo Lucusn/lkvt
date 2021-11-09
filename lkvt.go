@@ -64,6 +64,7 @@ type config struct {
 	putTimes         []time.Duration
 	getTimes         []time.Duration
 	wg               sync.WaitGroup
+	mapMutex	 sync.Mutex
 	addr             string
 	port             string
 	lastCon          int
@@ -221,7 +222,7 @@ func (conf *config) createclient(endpoint []string) {
 		conf.NkvcClient.UseSpecificServerName = *conf.specificServer
 		conf.NkvcClient.IsStatRequired = true
 		go conf.NkvcClient.Start(conf.nkvcStop, *conf.configPath)
-		time.Sleep(5 * time.Second)
+		conf.NkvcClient.Tillready()
 	case 1:
 		conf.etcdClient, err = clientv3.New(clientv3.Config{
 			Endpoints:   endpoint,
@@ -416,7 +417,9 @@ func (conf *config) executeOp(kv keyValue) {
 		stopGetTime := time.Since(timer)
 		conf.getTimes = append(conf.getTimes, stopGetTime)
 	}
+	conf.mapMutex.Lock()
 	conf.CheckMap[kv.key.String()] += 1
+	conf.mapMutex.Unlock()
 }
 
 func (conf *config) lkvtPut(kv keyValue) {
