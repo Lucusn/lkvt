@@ -4,17 +4,19 @@ replace github.com/coreos/bbolt v1.3.4 => go.etcd.io/bbolt v1.3.4
 
 replace go.etcd.io/bbolt v1.3.4 => github.com/coreos/bbolt v1.3.4
 
-replace niovakv/clientapi => ../niovakv_client_api
+replace common/clientAPI => ../../../../serf/clientAPI
 
-replace niovakv/serfclienthandler => ../../common/serf/client
+replace common/serfClient => ../../../../serf/client
 
-replace niovakv/niovakvlib => ../lib
+replace common/requestResponseLib => ../requestResponseLib
 
-replace niovakv/httpclient =>  ../../common/http/client
+replace common/httpClient => ../../../../http/client
 
 go 1.16
 
 require (
+	common/clientAPI v0.0.0-00010101000000-000000000000 // indirect
+	common/requestResponseLib v0.0.0-00010101000000-000000000000 // indirect
 	github.com/aybabtme/uniplot v0.0.0-20151203143629-039c559e5e7e // indirect
 	github.com/cncf/udpa/go v0.0.0-20201120205902-5459f2c99403 // indirect
 	github.com/coreos/etcd v3.3.25+incompatible // indirect
@@ -30,6 +32,6 @@ require (
 	go.etcd.io/etcd v3.3.25+incompatible
 	go.uber.org/zap v1.17.0 // indirect
 	google.golang.org/grpc v1.26.0 // indirect
-	niovakv/clientapi v0.0.0-00010101000000-000000000000 // indirect
-	niovakv/niovakvlib v0.0.0-00010101000000-000000000000 // indirect
+//niovakv/clientapi v0.0.0-00010101000000-000000000000 // indirect
+//niovakv/niovakvlib v0.0.0-00010101000000-000000000000 // indirect
 )

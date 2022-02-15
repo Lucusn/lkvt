@@ -16,9 +16,9 @@ import (
 	"sync"
 	"sync/atomic"
 	"time"
-
-	"niovakv/clientapi"
-	"niovakv/niovakvlib"
+	"encoding/gob"
+	"common/clientAPI"
+	"common/requestResponseLib"
 
 	"github.com/aybabtme/uniplot/histogram"
 	log "github.com/sirupsen/logrus"
@@ -35,7 +35,7 @@ type keyValue struct {
 	randVal    [4]byte
 	crcCheck   bool
 	etcdClient *clientv3.Client
-	nkvcClient *clientapi.ClientAPI
+	nkvcClient *clientAPI.ClientAPIHandler
 	footer     kvFooter
 	count      int
 	opType     int
@@ -59,7 +59,7 @@ type config struct {
 	database         *int
 	rSeed            *rand.Rand
 	etcdClient       *clientv3.Client
-	NkvcClient       clientapi.ClientAPI
+	NkvcClient       clientAPI.ClientAPIHandler
 	nkvcStop         chan int
 	putTimes         []time.Duration
 	getTimes         []time.Duration
@@ -221,8 +221,8 @@ func (conf *config) createclient(endpoint []string) {
 		conf.NkvcClient.ServerChooseAlgorithm = *conf.chooseAlgo
 		conf.NkvcClient.UseSpecificServerName = *conf.specificServer
 		conf.NkvcClient.IsStatRequired = true
-		go conf.NkvcClient.Start(conf.nkvcStop, *conf.configPath)
-		conf.NkvcClient.Tillready()
+		go conf.NkvcClient.Start_ClientAPI(conf.nkvcStop, *conf.configPath)
+		conf.NkvcClient.Till_ready()
 	case 1:
 		conf.etcdClient, err = clientv3.New(clientv3.Config{
 			Endpoints:   endpoint,
@@ -247,13 +247,23 @@ func (o *keyValue) etcdPut() {
 }
 
 func (o *keyValue) niovaPut(addr string, port string) bool {
-	reqObj := niovakvlib.NiovaKV{
-		InputKey:   o.key.String(),
-		InputValue: o.valForPut,
+	reqObj := requestResponseLib.KVRequest{
+		Key:   o.key.String(),
+		Value: o.valForPut,
 	}
 	//o.nkvcClient.ReqObj = &reqObj
 
-	putStatus, _ := o.nkvcClient.Put(&reqObj)
+	var requestByte bytes.Buffer
+        enc := gob.NewEncoder(&requestByte)
+        enc.Encode(reqObj)
+        responseByte := o.nkvcClient.Request(requestByte.Bytes(), "", false)
+
+        //Decode response to IPAddr and Port
+        responseObj := requestResponseLib.KVResponse{}
+        dec := gob.NewDecoder(bytes.NewBuffer(responseByte))
+        dec.Decode(&responseObj)
+        putStatus := responseObj.Status
+
 	log.WithFields(log.Fields{
 		"kv.key":                o.key,
 		"put value":             o.valForPut,
@@ -292,11 +302,20 @@ func (o *keyValue) etcdGet() {
 
 func (o *keyValue) niovaGet(addr string, port string) bool {
 	status := true
-	reqObj := niovakvlib.NiovaKV{
-		InputKey: o.key.String(),
+	reqObj := requestResponseLib.KVRequest{
+		Key: o.key.String(),
 	}
+	var requestByte bytes.Buffer
+        enc := gob.NewEncoder(&requestByte)
+        enc.Encode(reqObj)
+        responseByte := o.nkvcClient.Request(requestByte.Bytes(), "", false)
 
-	_, getVal := o.nkvcClient.Get(&reqObj)
+        //Decode response to IPAddr and Port
+        responseObj := requestResponseLib.KVResponse{}
+        dec := gob.NewDecoder(bytes.NewBuffer(responseByte))
+        dec.Decode(&responseObj)
+	getVal := responseObj.Value
+
 	log.WithFields(log.Fields{
 		"get key":               o.key.String(),
 		"get value":             getVal,
