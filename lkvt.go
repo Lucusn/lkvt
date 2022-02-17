@@ -221,8 +221,8 @@ func (conf *config) createclient(endpoint []string) {
 		conf.NkvcClient.ServerChooseAlgorithm = *conf.chooseAlgo
 		conf.NkvcClient.UseSpecificServerName = *conf.specificServer
 		conf.NkvcClient.IsStatRequired = true
-		go conf.NkvcClient.Start_ClientAPI(conf.nkvcStop, *conf.configPath)
-		conf.NkvcClient.Till_ready()
+		go conf.NkvcClient.StartClientAPI(conf.nkvcStop, *conf.configPath)
+		conf.NkvcClient.TillReady()
 	case 1:
 		conf.etcdClient, err = clientv3.New(clientv3.Config{
 			Endpoints:   endpoint,
