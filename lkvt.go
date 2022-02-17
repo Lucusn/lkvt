@@ -248,6 +248,7 @@ func (o *keyValue) etcdPut() {
 
 func (o *keyValue) niovaPut(addr string, port string) bool {
 	reqObj := requestResponseLib.KVRequest{
+		Operation: "write",
 		Key:   o.key.String(),
 		Value: o.valForPut,
 	}
@@ -303,6 +304,7 @@ func (o *keyValue) etcdGet() {
 func (o *keyValue) niovaGet(addr string, port string) bool {
 	status := true
 	reqObj := requestResponseLib.KVRequest{
+		Operation: "read",
 		Key: o.key.String(),
 	}
 	var requestByte bytes.Buffer
