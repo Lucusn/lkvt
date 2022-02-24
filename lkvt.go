@@ -17,7 +17,7 @@ import (
 	"sync/atomic"
 	"time"
 	"encoding/gob"
-	"common/clientAPI"
+	"common/serviceDiscovery"
 	"common/requestResponseLib"
 
 	"github.com/aybabtme/uniplot/histogram"
@@ -35,7 +35,7 @@ type keyValue struct {
 	randVal    [4]byte
 	crcCheck   bool
 	etcdClient *clientv3.Client
-	nkvcClient *clientAPI.ClientAPIHandler
+	nkvcClient *serviceDiscovery.ServiceDiscoveryHandler
 	footer     kvFooter
 	count      int
 	opType     int
@@ -59,7 +59,7 @@ type config struct {
 	database         *int
 	rSeed            *rand.Rand
 	etcdClient       *clientv3.Client
-	NkvcClient       clientAPI.ClientAPIHandler
+	NkvcClient       serviceDiscovery.ServiceDiscoveryHandler
 	nkvcStop         chan int
 	putTimes         []time.Duration
 	getTimes         []time.Duration

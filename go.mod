@@ -4,7 +4,7 @@ replace github.com/coreos/bbolt v1.3.4 => go.etcd.io/bbolt v1.3.4
 
 replace go.etcd.io/bbolt v1.3.4 => github.com/coreos/bbolt v1.3.4
 
-replace common/clientAPI => ../../../../serf/clientAPI
+replace common/serviceDiscovery => ../../../../serf/serviceDiscovery
 
 replace common/serfClient => ../../../../serf/client
 
