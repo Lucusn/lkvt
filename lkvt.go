@@ -443,9 +443,9 @@ func (conf *config) lkvtGet(kv keyValue) {
 		atomic.AddInt64(&conf.Getcount,int64(1))
 		status := kv.niovaGet(conf.addr, conf.port)
 		if status {
-                        atomic.AddInt64(&conf.GetSuccess,int64(1))
-                } else {
                         atomic.AddInt64(&conf.GetFailure,int64(1))
+                } else {
+                        atomic.AddInt64(&conf.GetSuccess,int64(1))
                 }
 	case 1:
 		kv.etcdGet()
