@@ -14,6 +14,8 @@ replace common/httpClient => ../../../../http/client
 
 replace common/specificCompressionLib => ../../../../specificCompressionLib
 
+replace common/specificCompressionLib => ../../../../specificCompressionLib
+
 go 1.16
 
 require (
