@@ -14,14 +14,12 @@ replace common/httpClient => ../../../../http/client
 
 replace common/specificCompressionLib => ../../../../specificCompressionLib
 
-replace common/specificCompressionLib => ../../../../specificCompressionLib
+replace niova/go-pumicedb-lib/common => ../../../common
 
 go 1.16
 
 require (
-	common/httpClient v0.0.0-00010101000000-000000000000 // indirect
 	common/requestResponseLib v0.0.0-00010101000000-000000000000
-	common/serfClient v0.0.0-00010101000000-000000000000 // indirect
 	common/serviceDiscovery v0.0.0-00010101000000-000000000000
 	github.com/aybabtme/uniplot v0.0.0-20151203143629-039c559e5e7e
 	github.com/coreos/etcd v2.3.8+incompatible // indirect
@@ -29,4 +27,5 @@ require (
 	github.com/golang/protobuf v1.5.2 // indirect
 	github.com/sirupsen/logrus v1.8.1
 	go.etcd.io/etcd v2.3.8+incompatible
+	niova/go-pumicedb-lib/common v0.0.0-00010101000000-000000000000 // indirect
 )
