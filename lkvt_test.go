@@ -53,3 +53,16 @@ func TestCrc(t *testing.T) {
 		t.Errorf("value changed during the get")
 	}
 }
+
+func Test_main(t *testing.T) {
+	tests := []struct {
+		name string
+	}{
+		// TODO: Add test cases.
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			main()
+		})
+	}
+}
