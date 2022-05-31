@@ -1,7 +1,6 @@
 package main
 
 import (
-	"bufio"
 	"bytes"
 	"common/requestResponseLib"
 	"common/serfAgent"
@@ -64,7 +63,7 @@ type config struct {
 	seed             *int64
 	concurrency      *int
 	endpoints        *string
-	database         *int
+	database         *string
 	rSeed            *rand.Rand
 	etcdClient       *clientv3.Client
 	NkvcClient       serviceDiscovery.ServiceDiscoveryHandler
@@ -72,7 +71,7 @@ type config struct {
 	putTimes         []time.Duration
 	getTimes         []time.Duration
 	wg               sync.WaitGroup
-	mapMutex	 sync.Mutex
+	mapMutex         sync.Mutex
 	addr             string
 	port             string
 	lastCon          int
@@ -80,27 +79,27 @@ type config struct {
 	configPath       *string
 	jsonPath         *string
 	chooseAlgo       *int
-    specificServer	 *string
+	specificServer   *string
 
-	Amount     		 *int    `json:"Request_count"`
-	Putcount   		 int64  `json:"Put_count"`
-	Getcount   		 int64  `json:"Get_count"`
-	PutSuccess 		 int64  `json:"Put_success"`
-	GetSuccess 		 int64  `json:"Get_success"`
-	PutFailure 		 int64  `json:"Put_failures"`
-	GetFailure 		 int64  `json:"Get_failures"`
-	CheckMap   		 map[string]int
-	raftUUID         *string
-	clientUUID       *string
-	pmdbClientObj           *pmdbClient.PmdbClientObj
+	Amount        *int  `json:"Request_count"`
+	Putcount      int64 `json:"Put_count"`
+	Getcount      int64 `json:"Get_count"`
+	PutSuccess    int64 `json:"Put_success"`
+	GetSuccess    int64 `json:"Get_success"`
+	PutFailure    int64 `json:"Put_failures"`
+	GetFailure    int64 `json:"Get_failures"`
+	CheckMap      map[string]int
+	raftUUID      *string
+	clientUUID    *string
+	pmdbClientObj *pmdbClient.PmdbClientObj
 	//Serf agent
 	serfAgentName    *string
 	serfAgentPort    uint16
 	serfAgentRPCPort uint16
 	serfLogger       *string
 	serfAgentObj     serfAgent.SerfAgentHandler
-	logLevel   		 *string
-	ipaddr net.IP
+	logLevel         *string
+	ipaddr           net.IP
 }
 
 type PeerConfigData struct {
@@ -157,7 +156,7 @@ func (conf *config) exitApp(skip bool) {
 	go conf.printProgress()
 	conf.wg.Wait()
 	//To avoid executing the stat inbetween
-	if skip{
+	if skip {
 		return
 	}
 	conf.stopClient()
@@ -173,8 +172,8 @@ func (conf *config) exitApp(skip bool) {
 	hGet := histogram.Hist(9, floatGet)
 
 	logrus.WithFields(logrus.Fields{
-		"\noperations given": *conf.Amount,
-		"\noperations completed": conf.PutSuccess+conf.GetSuccess,
+		"\noperations given":     *conf.Amount,
+		"\noperations completed": conf.PutSuccess + conf.GetSuccess,
 		"\nseconds to complete":  (float64(sumTime(conf.putTimes).Seconds()) / float64(*conf.concurrency)) + (float64(sumTime(conf.getTimes).Seconds()) / float64(*conf.concurrency)),
 		"\ntime for puts":        float64(sumTime(conf.putTimes).Seconds()) / float64(*conf.concurrency),
 		"\ntime for gets":        float64(sumTime(conf.getTimes).Seconds()) / float64(*conf.concurrency),
@@ -191,11 +190,17 @@ func (conf *config) exitApp(skip bool) {
 
 func (conf *config) stopClient() {
 	switch *conf.database {
-	case 0:
+	case "NKVC":
 		conf.nkvcStop <- 1
-	case 1:
+	case "ETCD":
 		conf.etcdClient.Close()
+	case "PMDB":
+		//shut down PMDB client
+	default:
+		logrus.Error("No Valid Database selected. check flag -d")
+		os.Exit(1)
 	}
+
 }
 
 func sumTime(array []time.Duration) time.Duration {
@@ -242,7 +247,7 @@ func (conf *config) createclient(endpoint []string) {
 	var err error
 
 	switch *conf.database {
-	case 0:
+	case "NKVC":
 		conf.nkvcStop = make(chan int)
 		conf.NkvcClient.HTTPRetry = 5
 		conf.NkvcClient.SerfRetry = 5
@@ -250,79 +255,26 @@ func (conf *config) createclient(endpoint []string) {
 		conf.NkvcClient.UseSpecificServerName = *conf.specificServer
 		conf.NkvcClient.IsStatRequired = true
 		go conf.NkvcClient.StartClientAPI(conf.nkvcStop, *conf.configPath)
-		conf.NkvcClient.TillReady("" , 5)
-	case 1:
+		conf.NkvcClient.TillReady("", 5)
+	case "ETCD":
 		conf.etcdClient, err = clientv3.New(clientv3.Config{
 			Endpoints:   endpoint,
 			DialTimeout: 5 * time.Second,
 		})
-	case 2:
-		//add setup to talk to pmdb
-		//should you create the number of concurrent servers so each concurrent uses its own pmdb client?
-		switch *conf.logLevel {
-		case "Info":
-			logrus.SetLevel(logrus.InfoLevel)
-		case "Trace":
-			logrus.SetLevel(logrus.TraceLevel)
-		}
-		err = conf.getProxyConfigData()
-		if err != nil {
-			logrus.Error("(Proxy) Error while getting config data : ", err)
-			os.Exit(1)
-		}
-		// err = conf.start_SerfAgent()
-		// if err != nil {
-		// 	logrus.Error("Error while starting serf agent : ", err)
-		// 	os.Exit(1)
-		// }
+	case "PMDB":
 		err = conf.startPMDBClient()
 		if err != nil {
 			logrus.Error("(Niovakv Server) Error while starting pmdb client : ", err)
 			os.Exit(1)
 		}
-		// go conf.set_Serf_GossipData()
-		// logrus.Info("letting serf start up.")
-		// time.Sleep(5*time.Second)
-
+	default:
+		logrus.Error("No Valid Database selected. check flag -d")
+		os.Exit(1)
 	}
 
 	if err != nil {
 		log.Fatal("could not make connection", err)
 	}
-}
-func (conf *config) getProxyConfigData() error {
-	reader, err := os.Open(*conf.configPath)
-	if err != nil {
-		return err
-	}
-	filescanner := bufio.NewScanner(reader)
-	filescanner.Split(bufio.ScanLines)
-	var flag bool
-	for filescanner.Scan() {
-		input := strings.Split(filescanner.Text(), " ")
-		if input[0] == *conf.serfAgentName {
-			conf.ipaddr = net.ParseIP(input[1])
-			aport := input[2]
-			buffer, err := strconv.ParseUint(aport, 10, 16)
-			conf.serfAgentPort = uint16(buffer)
-			if err != nil {
-				return errors.New("Agent port is out of range")
-			}
-
-			rport := input[3]
-			buffer, err = strconv.ParseUint(rport, 10, 16)
-			if err != nil {
-				return errors.New("Agent port is out of range")
-			}
-
-			conf.serfAgentRPCPort = uint16(buffer)
-			flag = true
-		}
-	}
-	if !flag {
-		return errors.New("Agent name not matching or not provided")
-	}
-	return nil
 }
 
 func (conf *config) startPMDBClient() error {
@@ -346,57 +298,6 @@ func (conf *config) startPMDBClient() error {
 
 }
 
-func (conf *config) start_SerfAgent() error {
-	switch *conf.serfLogger {
-	case "ignore":
-		log.SetOutput(ioutil.Discard)
-	default:
-		f, err := os.OpenFile(*conf.serfLogger, os.O_WRONLY|os.O_APPEND|os.O_CREATE, 0644)
-		if err != nil {
-			log.SetOutput(os.Stderr)
-		} else {
-			log.SetOutput(f)
-		}
-	}
-
-	conf.serfAgentObj = serfAgent.SerfAgentHandler{}
-	conf.serfAgentObj.Name = *conf.serfAgentName
-	conf.serfAgentObj.BindAddr = conf.ipaddr
-	conf.serfAgentObj.BindPort = conf.serfAgentPort
-	conf.serfAgentObj.AgentLogger = log.Default()
-	conf.serfAgentObj.RpcAddr = conf.ipaddr
-	conf.serfAgentObj.RpcPort = conf.serfAgentRPCPort
-	joinAddrs, err := serfAgent.GetPeerAddress(*conf.configPath)
-	if err != nil {
-		return err
-	}
-	//Start serf agent
-	_, err = conf.serfAgentObj.SerfAgentStartup(joinAddrs, true)
-
-	return err
-}
-
-func (conf *config) set_Serf_GossipData() {
-	tag := make(map[string]string)
-	tag["Aport"] = strconv.Itoa(int(conf.serfAgentPort))
-	tag["Rport"] = strconv.Itoa(int(conf.serfAgentRPCPort))
-	tag["Type"] = "PROXY"
-	conf.serfAgentObj.SetNodeTags(tag)
-	for {
-		leader, err := conf.pmdbClientObj.PmdbGetLeader()
-		if err != nil {
-			logrus.Error(err)
-			//Wait for sometime to pmdb client to establish connection with raft cluster or raft cluster to appoint a leader
-			time.Sleep(5 * time.Second)
-			continue
-		}
-		tag["Leader UUID"] = leader.String()
-		conf.serfAgentObj.SetNodeTags(tag)
-		logrus.Trace("(Proxy)", tag)
-		time.Sleep(300 * time.Millisecond)
-	}
-}
-
 func (o *keyValue) etcdPut() {
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	o.etcdClient.Put(ctx, o.key.String(), string(o.valForPut))
@@ -411,23 +312,23 @@ func (o *keyValue) etcdPut() {
 func (o *keyValue) niovaPut(addr string, port string) bool {
 	reqObj := requestResponseLib.KVRequest{
 		Operation: "write",
-		Key:   o.key.String(),
-		Value: o.valForPut,
+		Key:       o.key.String(),
+		Value:     o.valForPut,
 	}
 	//o.nkvcClient.ReqObj = &reqObj
 
 	var requestByte bytes.Buffer
-        enc := gob.NewEncoder(&requestByte)
-        enc.Encode(reqObj)
-        responseByte, _ := o.nkvcClient.Request(requestByte.Bytes(), "", true)
+	enc := gob.NewEncoder(&requestByte)
+	enc.Encode(reqObj)
+	responseByte, _ := o.nkvcClient.Request(requestByte.Bytes(), "", true)
 
-        //Decode response to IPAddr and Port
-        responseObj := requestResponseLib.KVResponse{}
-        dec := gob.NewDecoder(bytes.NewBuffer(responseByte))
-        dec.Decode(&responseObj)
-        putStatus := responseObj.Status
+	//Decode response to IPAddr and Port
+	responseObj := requestResponseLib.KVResponse{}
+	dec := gob.NewDecoder(bytes.NewBuffer(responseByte))
+	dec.Decode(&responseObj)
+	putStatus := responseObj.Status
 
-		logrus.WithFields(logrus.Fields{
+	logrus.WithFields(logrus.Fields{
 		"kv.key":                o.key,
 		"put value":             o.valForPut,
 		"time of put Unix nano": o.footer.timeUnix,
@@ -443,17 +344,17 @@ func (o *keyValue) pmdbPut(pmdbClientObj *pmdbClient.PmdbClientObj) bool {
 	//write operation for pmdb
 	reqObj := requestResponseLib.KVRequest{
 		Operation: "write",
-		Key:   o.key.String(),
-		Value: o.valForPut,
+		Key:       o.key.String(),
+		Value:     o.valForPut,
 	}
 	var requestByte bytes.Buffer
-	enc := gob.NewEncoder(&requestByte) 
+	enc := gob.NewEncoder(&requestByte)
 	enc.Encode(reqObj)
 	idq := atomic.AddUint64(&pmdbClientObj.WriteSeqNo, uint64(1))
 	rncui := fmt.Sprintf("%s:0:0:0:%d", pmdbClientObj.AppUUID, idq)
-	putStatus:=pmdbClientObj.WriteEncoded(requestByte.Bytes(), rncui)
+	putStatus := pmdbClientObj.WriteEncoded(requestByte.Bytes(), rncui)
 	if putStatus != nil {
-		logrus.Error("PMDB put error: ",putStatus)
+		logrus.Error("PMDB put error: ", putStatus)
 		return false
 	}
 	return true
@@ -487,17 +388,17 @@ func (o *keyValue) niovaGet(addr string, port string) bool {
 	status := true
 	reqObj := requestResponseLib.KVRequest{
 		Operation: "read",
-		Key: o.key.String(),
+		Key:       o.key.String(),
 	}
 	var requestByte bytes.Buffer
-        enc := gob.NewEncoder(&requestByte)
-        enc.Encode(reqObj)
-        responseByte, _ := o.nkvcClient.Request(requestByte.Bytes(), "", false)
+	enc := gob.NewEncoder(&requestByte)
+	enc.Encode(reqObj)
+	responseByte, _ := o.nkvcClient.Request(requestByte.Bytes(), "", false)
 
-        //Decode response to IPAddr and Port
-        responseObj := requestResponseLib.KVResponse{}
-        dec := gob.NewDecoder(bytes.NewBuffer(responseByte))
-        dec.Decode(&responseObj)
+	//Decode response to IPAddr and Port
+	responseObj := requestResponseLib.KVResponse{}
+	dec := gob.NewDecoder(bytes.NewBuffer(responseByte))
+	dec.Decode(&responseObj)
 	getVal := responseObj.Value
 
 	logrus.WithFields(logrus.Fields{
@@ -516,7 +417,7 @@ func (o *keyValue) niovaGet(addr string, port string) bool {
 			o.crcChecker(getVal, getFooter)
 			status = o.crcCheck
 		} else {
-			logrus.Info(o.key.String(), ":" ,string(getVal))
+			logrus.Info(o.key.String(), ":", string(getVal))
 			logrus.Error("magic check failes. ", getFooter[0], byte(175))
 		}
 	} else {
@@ -531,16 +432,16 @@ func (o *keyValue) pmdbGet(pmdbClientObj *pmdbClient.PmdbClientObj) bool {
 	//read operation for pmdb
 	reqObj := requestResponseLib.KVRequest{
 		Operation: "read",
-		Key: o.key.String(),
+		Key:       o.key.String(),
 	}
 	var responseByte bytes.Buffer
-	response:=responseByte.Bytes()
+	response := responseByte.Bytes()
 	var requestByte bytes.Buffer
-    enc := gob.NewEncoder(&requestByte)
-    enc.Encode(reqObj)
-	getError :=pmdbClientObj.ReadEncoded(requestByte.Bytes(), "", &response)
+	enc := gob.NewEncoder(&requestByte)
+	enc.Encode(reqObj)
+	getError := pmdbClientObj.ReadEncoded(requestByte.Bytes(), "", &response)
 	if getError != nil {
-		logrus.Error("PMDB put error: ",getError)
+		logrus.Error("PMDB put error: ", getError)
 		return false
 	}
 	responseObj := requestResponseLib.KVResponse{}
@@ -563,7 +464,7 @@ func (o *keyValue) pmdbGet(pmdbClientObj *pmdbClient.PmdbClientObj) bool {
 			o.crcChecker(getVal, getFooter)
 			status = o.crcCheck
 		} else {
-			logrus.Info(o.key.String(), ":" ,string(getVal))
+			logrus.Info(o.key.String(), ":", string(getVal))
 			logrus.Error("magic check failes. ", getFooter[0], byte(175))
 		}
 	} else {
@@ -674,45 +575,51 @@ func (conf *config) executeOp(kv keyValue) {
 
 func (conf *config) lkvtPut(kv keyValue) {
 	switch *conf.database {
-	case 0:
-		atomic.AddInt64(&conf.Putcount,int64(1))
+	case "NKVC":
+		atomic.AddInt64(&conf.Putcount, int64(1))
 		status := kv.niovaPut(conf.addr, conf.port)
 		if status {
-			atomic.AddInt64(&conf.PutSuccess,int64(1))
+			atomic.AddInt64(&conf.PutSuccess, int64(1))
 		} else {
-			atomic.AddInt64(&conf.PutFailure,int64(1))
+			atomic.AddInt64(&conf.PutFailure, int64(1))
 		}
-	case 1:
+	case "ETCD":
 		kv.etcdPut()
-	case 2:
+	case "PMDB":
 		status := kv.pmdbPut(conf.pmdbClientObj)
 		if status {
-			atomic.AddInt64(&conf.PutSuccess,int64(1))
+			atomic.AddInt64(&conf.PutSuccess, int64(1))
 		} else {
-			atomic.AddInt64(&conf.PutFailure,int64(1))
+			atomic.AddInt64(&conf.PutFailure, int64(1))
 		}
+	default:
+		logrus.Error("No Valid Database selected. check flag -d")
+		os.Exit(1)
 	}
 }
 
 func (conf *config) lkvtGet(kv keyValue) {
 	switch *conf.database {
-	case 0:
-		atomic.AddInt64(&conf.Getcount,int64(1))
+	case "NKVC":
+		atomic.AddInt64(&conf.Getcount, int64(1))
 		status := kv.niovaGet(conf.addr, conf.port)
 		if status {
-                        atomic.AddInt64(&conf.GetSuccess,int64(1))
-                } else {
-                        atomic.AddInt64(&conf.GetFailure,int64(1))
-                }
-	case 1:
+			atomic.AddInt64(&conf.GetSuccess, int64(1))
+		} else {
+			atomic.AddInt64(&conf.GetFailure, int64(1))
+		}
+	case "ETCD":
 		kv.etcdGet()
-	case 2:
+	case "PMDB":
 		status := kv.pmdbGet(conf.pmdbClientObj)
 		if status {
-			atomic.AddInt64(&conf.GetSuccess,int64(1))
+			atomic.AddInt64(&conf.GetSuccess, int64(1))
 		} else {
-			atomic.AddInt64(&conf.GetFailure,int64(1))
+			atomic.AddInt64(&conf.GetFailure, int64(1))
 		}
+	default:
+		logrus.Error("No Valid Database selected. check flag -d")
+		os.Exit(1)
 	}
 }
 
@@ -751,36 +658,35 @@ func (conf *config) write_read() {
 
 	//Do reads
 	*conf.putPercentage = float64(0)
-        for c := 0; c < *conf.concurrency; c++ {
+	for c := 0; c < *conf.concurrency; c++ {
 		go conf.execute(c, ran, &conf.wg)
-                time.Sleep(1000)
-        }
+		time.Sleep(1000)
+	}
 
 }
 
 func main() {
 	logrus.Info("starting the app...")
 	conf := config{
-		putPercentage: 	flag.Float64("pp", -1, "percentage of puts versus gets. 0.50 means 50% put 50% get"),
-		valueSize:     	flag.Int("vs", 0, "size of the value in bytes. min:16 bytes. ‘0’ means that the size is random"),
-		keySize:       	flag.Int("ks", 0, "size of the key in bytes. min:1 byte. ‘0’ means that the size is random"),
-		Amount:        	flag.Int("n", 1, "number of operations"),
-		keyPrefix:     	flag.String("kp", "key", "specify a key prefix"),
-		seed:          	flag.Int64("s", time.Now().UnixNano(), "seed to the random number generator"),
-		concurrency:   	flag.Int("c", 1, "The number of concurrent requests which may be outstanding at any one time"),
-		endpoints:     	flag.String("ep", "http://127.0.0.100:2380,http://127.0.0.101:2380,http://127.0.0.102:2380,http://127.0.0.103:2380,http://127.0.0.104:2380", "endpoints seperated by comas ex.http://127.0.0.100:2380,http://127.0.0.101:2380"),
-		database:      	flag.Int("d", 0, "the database you would like to use (0 = pmdb 1 = etcd)"),
-		configPath:    	flag.String("cp", "./config", "Path to niova config file"),
-		jsonPath:      	flag.String("jp", "execution-summary", "Path to execution summary json file"),
-		chooseAlgo:    	flag.Int("ca", 0, "Algorithm for choosing niovakv_server [0-Random , 1-Round robin, 2-specific]"),
-		specificServer:	flag.String("ss", "-1", "Specific server name to choose in case if -ca set to 2"),
+		putPercentage:  flag.Float64("pp", -1, "percentage of puts versus gets. 0.50 means 50% put 50% get"),
+		valueSize:      flag.Int("vs", 0, "size of the value in bytes. min:16 bytes. ‘0’ means that the size is random"),
+		keySize:        flag.Int("ks", 0, "size of the key in bytes. min:1 byte. ‘0’ means that the size is random"),
+		Amount:         flag.Int("n", 1, "number of operations"),
+		keyPrefix:      flag.String("kp", "key", "specify a key prefix"),
+		seed:           flag.Int64("s", time.Now().UnixNano(), "seed to the random number generator"),
+		concurrency:    flag.Int("c", 1, "The number of concurrent requests which may be outstanding at any one time"),
+		endpoints:      flag.String("ep", "http://127.0.0.100:2380,http://127.0.0.101:2380,http://127.0.0.102:2380,http://127.0.0.103:2380,http://127.0.0.104:2380", "endpoints seperated by comas ex.http://127.0.0.100:2380,http://127.0.0.101:2380"),
+		database:       flag.String("d", "", "the database you would like to use (0 = pmdb 1 = etcd)"),
+		configPath:     flag.String("cp", "./config", "Path to niova config file"),
+		jsonPath:       flag.String("jp", "execution-summary", "Path to execution summary json file"),
+		chooseAlgo:     flag.Int("ca", 0, "Algorithm for choosing niovakv_server [0-Random , 1-Round robin, 2-specific]"),
+		specificServer: flag.String("ss", "-1", "Specific server name to choose in case if -ca set to 2"),
 		//get new flags
-		raftUUID:		flag.String("r", "NULL", "raft uuid"),
-		clientUUID:		flag.String("u", uuid.NewV4().String(), "client uuid"),
-		logLevel:		flag.String("ll", "", "Set log level for the execution"),
-		serfLogger:		flag.String("sl", "ignore", "serf logger file [default:ignore]"),
-		serfAgentName:	flag.String("sn", "Node1", "serf agent name"),
-
+		raftUUID:      flag.String("r", "NULL", "raft uuid"),
+		clientUUID:    flag.String("u", uuid.NewV4().String(), "client uuid"),
+		logLevel:      flag.String("ll", "", "Set log level for the execution"),
+		serfLogger:    flag.String("sl", "ignore", "serf logger file [default:ignore]"),
+		serfAgentName: flag.String("sn", "Node1", "serf agent name"),
 	}
 	conf.setUp()
 
