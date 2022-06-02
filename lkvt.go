@@ -14,15 +14,16 @@ import (
 	"fmt"
 	"hash/crc32"
 	"io/ioutil"
-	"log"
 	"math/rand"
 	"net"
 	pmdbClient "niova/go-pumicedb-lib/client"
 	"os"
+	"os/signal"
 	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
+	"syscall"
 	"time"
 
 	uuid "github.com/satori/go.uuid"
@@ -46,6 +47,7 @@ type keyValue struct {
 	footer     kvFooter
 	count      int
 	opType     int
+	reqNum	   int
 }
 
 type kvFooter struct {
@@ -76,6 +78,7 @@ type config struct {
 	port             string
 	lastCon          int
 	completedRequest int64
+	completedConcurrent int64
 	configPath       *string
 	jsonPath         *string
 	chooseAlgo       *int
@@ -115,6 +118,11 @@ func (conf *config) printProgress() {
 		fmt.Print("\033[G\033[K")
 		fmt.Print("\033[A")
 		fmt.Println(atomic.LoadInt64(&conf.completedRequest), " / ", int64(*conf.Amount), "request completed")
+		time.Sleep(1 * time.Second)
+		//switch between go tasks completed and requests completed
+		fmt.Print("\033[G\033[K")
+		fmt.Print("\033[A")
+		fmt.Println(atomic.LoadInt64(&conf.completedConcurrent), " / ", int64(*conf.concurrency), "Concurrent tasks completed")
 		time.Sleep(1 * time.Second)
 	}
 	fmt.Print("\033[G\033[K")
@@ -160,6 +168,10 @@ func (conf *config) exitApp(skip bool) {
 		return
 	}
 	conf.stopClient()
+	conf.statsLog()
+}
+
+func (conf *config) statsLog(){
 	var floatPut = make([]float64, len(conf.putTimes))
 	for i := 0; i < len(floatPut); i++ {
 		floatPut[i] = float64(conf.putTimes[i].Milliseconds())
@@ -177,10 +189,10 @@ func (conf *config) exitApp(skip bool) {
 		"\nseconds to complete":  (float64(sumTime(conf.putTimes).Seconds()) / float64(*conf.concurrency)) + (float64(sumTime(conf.getTimes).Seconds()) / float64(*conf.concurrency)),
 		"\ntime for puts":        float64(sumTime(conf.putTimes).Seconds()) / float64(*conf.concurrency),
 		"\ntime for gets":        float64(sumTime(conf.getTimes).Seconds()) / float64(*conf.concurrency),
-		"\nput per sec":          (*conf.putPercentage * float64(*conf.Amount)) / (float64(sumTime(conf.putTimes).Seconds()) / float64(*conf.concurrency)),
-		"\nget per sec":          (((*conf.putPercentage - 1) * -1) * float64(*conf.Amount)) / (float64(sumTime(conf.getTimes).Seconds()) / float64(*conf.concurrency)),
-		"\naverage ms per put":   (float64(sumTime(conf.putTimes).Milliseconds()) / float64(*conf.Amount)),
-		"\naverage ms per get":   (float64(sumTime(conf.getTimes).Milliseconds()) / float64(*conf.Amount)),
+		"\nput per sec":          (*conf.putPercentage * float64(conf.PutSuccess)) / (float64(sumTime(conf.putTimes).Seconds()) / float64(*conf.concurrency)),
+		"\nget per sec":          (((*conf.putPercentage - 1) * -1) * float64(conf.GetSuccess,)) / (float64(sumTime(conf.getTimes).Seconds()) / float64(*conf.concurrency)),
+		"\naverage ms per put":   (float64(sumTime(conf.putTimes).Milliseconds()) / float64(conf.PutSuccess)),
+		"\naverage ms per get":   (float64(sumTime(conf.getTimes).Milliseconds()) / float64(conf.GetSuccess,)),
 	}).Info("done")
 	logrus.Info("ms latency for puts")
 	histogram.Fprint(os.Stdout, hPut, histogram.Linear(5))
@@ -267,13 +279,24 @@ func (conf *config) createclient(endpoint []string) {
 			logrus.Error("(Niovakv Server) Error while starting pmdb client : ", err)
 			os.Exit(1)
 		}
+		timer := time.Now()
+		for (time.Since(timer) < time.Minute){
+			_, err := conf.pmdbClientObj.PmdbGetLeader()
+			if err != nil {
+				logrus.Info("establishing raft connection")
+				//Wait for sometime to pmdb client to establish connection with raft cluster or raft cluster to appoint a leader
+				time.Sleep(time.Second)
+			}else{
+				break
+			}
+		}
 	default:
 		logrus.Error("No Valid Database selected. check flag -d")
 		os.Exit(1)
 	}
 
 	if err != nil {
-		log.Fatal("could not make connection", err)
+		logrus.Fatal("could not make connection", err)
 	}
 }
 
@@ -542,6 +565,7 @@ func (conf *config) execute(c int, ran []uint32, wg *sync.WaitGroup) {
 			nkvcClient: &conf.NkvcClient,
 			randVal:    toByteArray(ran[i]),
 			count:      int((*conf.Amount / *conf.concurrency)*c + i + 1),
+			reqNum:     i+1,
 		}
 
 		if float64(kv.count) <= float64(*conf.Amount)*(*conf.putPercentage) {
@@ -553,24 +577,50 @@ func (conf *config) execute(c int, ran []uint32, wg *sync.WaitGroup) {
 		conf.executeOp(kv)
 		atomic.AddInt64(&conf.completedRequest, int64(1))
 	}
+	atomic.AddInt64(&conf.completedConcurrent, int64(1))
 	defer wg.Done()
 }
 
 func (conf *config) executeOp(kv keyValue) {
+	ch := make(chan bool,1)
+	go setTimeWarn(ch,kv.key.String(),kv.reqNum)
 	timer := time.Now()
 	switch kv.opType {
 	case 0:
 		conf.lkvtPut(kv)
 		stopPutTime := time.Since(timer)
+		sendTimeWarn(ch)
 		conf.putTimes = append(conf.putTimes, stopPutTime)
 	case 1:
 		conf.lkvtGet(kv)
 		stopGetTime := time.Since(timer)
+		sendTimeWarn(ch)
 		conf.getTimes = append(conf.getTimes, stopGetTime)
 	}
 	conf.mapMutex.Lock()
 	conf.CheckMap[kv.key.String()] += 1
 	conf.mapMutex.Unlock()
+}
+
+func setTimeWarn(ch chan bool, key string,reqNum int){
+	completed :=false
+	time.Sleep(time.Second)
+	select {
+		case ch <- false: // Put false in the channel unless it is full
+		default:
+			completed = <-ch
+		}
+	if !completed{
+		logrus.Warn("operation is taking over a second:","\nRequest Number: ",strconv.Itoa(reqNum),"\nKey: ", key,"\n \n")
+	}
+}
+
+func sendTimeWarn(ch chan bool){
+	select {
+	case <-ch:
+	default:
+		ch <-true
+	}
 }
 
 func (conf *config) lkvtPut(kv keyValue) {
@@ -664,6 +714,16 @@ func (conf *config) write_read() {
 	}
 
 }
+func (conf *config) killSignal_Handler() {
+	sigs := make(chan os.Signal, 1)
+	signal.Notify(sigs, syscall.SIGINT, syscall.SIGTERM)
+	go func() {
+		<-sigs
+		logrus.Info("LKVT recieved kill signal")
+		conf.statsLog()
+		os.Exit(1)
+	}()
+}
 
 func main() {
 	logrus.Info("starting the app...")
@@ -671,12 +731,12 @@ func main() {
 		putPercentage:  flag.Float64("pp", -1, "percentage of puts versus gets. 0.50 means 50% put 50% get"),
 		valueSize:      flag.Int("vs", 0, "size of the value in bytes. min:16 bytes. ‘0’ means that the size is random"),
 		keySize:        flag.Int("ks", 0, "size of the key in bytes. min:1 byte. ‘0’ means that the size is random"),
-		Amount:         flag.Int("n", 1, "number of operations"),
+		Amount:         flag.Int("n", 1, "number of operations"),e
 		keyPrefix:      flag.String("kp", "key", "specify a key prefix"),
 		seed:           flag.Int64("s", time.Now().UnixNano(), "seed to the random number generator"),
 		concurrency:    flag.Int("c", 1, "The number of concurrent requests which may be outstanding at any one time"),
-		endpoints:      flag.String("ep", "http://127.0.0.100:2380,http://127.0.0.101:2380,http://127.0.0.102:2380,http://127.0.0.103:2380,http://127.0.0.104:2380", "endpoints seperated by comas ex.http://127.0.0.100:2380,http://127.0.0.101:2380"),
-		database:       flag.String("d", "", "the database you would like to use (0 = pmdb 1 = etcd)"),
+		endpoints:      flag.String("ep", "http://127.0.0.100:2380,http://127.0.0.101:2380,http://127.0.0.102:2380,http://127.0.0.103:2380,http://127.0.0.104:2380", "endpoints separated by comas ex.http://127.0.0.100:2380,http://127.0.0.101:2380"),
+		database:      	flag.String("d", "", "the database you would like to use (PMDB, NKVC, ETCD)"),
 		configPath:     flag.String("cp", "./config", "Path to niova config file"),
 		jsonPath:       flag.String("jp", "execution-summary", "Path to execution summary json file"),
 		chooseAlgo:     flag.Int("ca", 0, "Algorithm for choosing niovakv_server [0-Random , 1-Round robin, 2-specific]"),
@@ -689,7 +749,7 @@ func main() {
 		serfAgentName: flag.String("sn", "Node1", "serf agent name"),
 	}
 	conf.setUp()
-
+	go conf.killSignal_Handler()
 	if *conf.putPercentage != float64(-1) {
 
 		for c := 0; c < *conf.concurrency; c++ {
