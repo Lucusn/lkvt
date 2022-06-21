@@ -217,7 +217,8 @@ func (conf *config) createclient(endpoint []string) {
 	switch *conf.database {
 	case 0:
 		conf.nkvcStop = make(chan int)
-		conf.NkvcClient.Timeout = 10 * time.Second
+		conf.NkvcClient.HTTPRetry = 5
+		conf.NkvcClient.SerfRetry = 5
 		conf.NkvcClient.ServerChooseAlgorithm = *conf.chooseAlgo
 		conf.NkvcClient.UseSpecificServerName = *conf.specificServer
 		conf.NkvcClient.IsStatRequired = true
