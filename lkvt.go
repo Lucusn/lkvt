@@ -311,7 +311,7 @@ func (o *keyValue) niovaGet(addr string, port string) bool {
 	var requestByte bytes.Buffer
         enc := gob.NewEncoder(&requestByte)
         enc.Encode(reqObj)
-        responseByte := o.nkvcClient.Request(requestByte.Bytes(), "", false)
+        responseByte, _ := o.nkvcClient.Request(requestByte.Bytes(), "", false)
 
         //Decode response to IPAddr and Port
         responseObj := requestResponseLib.KVResponse{}
