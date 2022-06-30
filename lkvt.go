@@ -258,7 +258,7 @@ func (o *keyValue) niovaPut(addr string, port string) bool {
 	var requestByte bytes.Buffer
         enc := gob.NewEncoder(&requestByte)
         enc.Encode(reqObj)
-        responseByte := o.nkvcClient.Request(requestByte.Bytes(), "", true)
+        responseByte, _ := o.nkvcClient.Request(requestByte.Bytes(), "", true)
 
         //Decode response to IPAddr and Port
         responseObj := requestResponseLib.KVResponse{}
