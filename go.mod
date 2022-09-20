@@ -8,7 +8,7 @@ replace common/serviceDiscovery => ../../../../serf/serviceDiscovery
 
 replace common/serfClient => ../../../../serf/client
 
-replace common/requestResponseLib => ../requestResponseLib
+replace common/requestResponseLib => ../../../../lookout/RequestResponseLib
 
 replace common/httpClient => ../../../../http/client
 
