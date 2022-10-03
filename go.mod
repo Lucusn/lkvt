@@ -16,6 +16,8 @@ replace common/specificCompressionLib => ../../../../specificCompressionLib
 
 replace niova/go-pumicedb-lib/common => ../../../common
 
+replace common/serfAgent => ../../../../serf/agent
+
 go 1.16
 
 require (
