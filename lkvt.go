@@ -267,7 +267,8 @@ func (conf *config) createclient(endpoint []string) {
 		conf.NkvcClient.UseSpecificServerName = *conf.specificServer
 		conf.NkvcClient.IsStatRequired = true
 		go conf.NkvcClient.StartClientAPI(conf.nkvcStop, *conf.configPath)
-		conf.NkvcClient.TillReady("", 5)
+		//		conf.NkvcClient.TillReady("", 5)
+		conf.NkvcClient.TillReady()
 	case "ETCD":
 		conf.etcdClient, err = clientv3.New(clientv3.Config{
 			Endpoints:   endpoint,
